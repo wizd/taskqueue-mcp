@@ -1,14 +1,9 @@
 // 在所有测试运行前加载.env环境变量
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
-import { createRequire } from 'module';
+const dotenv = require('dotenv');
+const path = require('path');
+const fs = require('fs');
 
-// 使用ES模块的方法获取当前文件路径
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
+// __dirname变量在CommonJS模块中默认可用，不需要额外定义
 
 // 尝试加载项目根目录下的.env文件
 const envPath = path.resolve(path.join(__dirname, '..'), '.env');

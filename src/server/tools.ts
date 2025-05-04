@@ -498,9 +498,11 @@ export async function executeToolAndHandleErrors(
       : String(error);
 
     // Format and RETURN the error within the 'result' field structure.
-    return {
+    const result: CallToolResult = {
       content: [{ type: "text", text: `Tool execution failed: ${errorMessage}` }],
       isError: true // Mark as an execution error as per MCP spec
     };
+    
+    return result;
   }
 }

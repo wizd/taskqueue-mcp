@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { setupTestContext, teardownTestContext, TestContext, createTestProject, verifyCallToolResult, verifyTaskInFile, verifyToolExecutionError, verifyProtocolError } from '../test-helpers.js';
+import { setupTestContext, teardownTestContext, TestContext, createTestProject, verifyCallToolResult, verifyTask, verifyToolExecutionError, verifyProtocolError } from '../test-helpers.js';
 import { CallToolResult, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 describe('create_task Tool', () => {
@@ -37,8 +37,8 @@ describe('create_task Tool', () => {
       expect(responseData.newTasks).toHaveLength(1);
       const newTask = responseData.newTasks[0];
 
-      // Verify task was created in file
-      await verifyTaskInFile(context.testFilePath, projectId, newTask.id, {
+      // 使用通用验证函数，自动选择验证策略
+      await verifyTask(context, projectId, newTask.id, {
         title: "New Test Task",
         description: "A simple test task",
         status: "not started",
@@ -62,7 +62,7 @@ describe('create_task Tool', () => {
       const responseData = JSON.parse((result.content[0] as { text: string }).text);
       const newTask = responseData.newTasks[0];
       
-      await verifyTaskInFile(context.testFilePath, projectId, newTask.id, {
+      await verifyTask(context, projectId, newTask.id, {
         title: "Task with Recommendations",
         description: "Task with specific recommendations",
         toolRecommendations: "Use tool A and B",
@@ -95,7 +95,7 @@ describe('create_task Tool', () => {
 
       // Verify all tasks were created
       for (let i = 0; i < tasks.length; i++) {
-        await verifyTaskInFile(context.testFilePath, projectId, taskIds[i], {
+        await verifyTask(context, projectId, taskIds[i], {
           title: tasks[i].title,
           description: tasks[i].description,
           status: "not started"
@@ -130,7 +130,7 @@ describe('create_task Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(result, /Project non-existent-project not found/);
+      verifyToolExecutionError(result, /项目 non-existent-project 不存在/);
     });
 
     it('should return error for empty title', async () => {

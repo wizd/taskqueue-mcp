@@ -108,7 +108,7 @@ export class BullMQTaskManager extends TaskManagerBase {
         throw error;
       }
       throw new AppError(
-        '创建项目失败',
+        'Failed to create project',
         AppErrorCode.Unknown,
         error
       );
@@ -153,7 +153,7 @@ export class BullMQTaskManager extends TaskManagerBase {
         const content = await this.readAttachmentFile(filename);
         attachmentContents.push(content);
       } catch (error) {
-        throw new AppError(`读取附件文件失败: ${filename}`, AppErrorCode.FileReadError, error);
+        throw new AppError(`Failed to read attachment file: ${filename}`, AppErrorCode.FileReadError, error);
       }
     }
 
@@ -226,7 +226,7 @@ export class BullMQTaskManager extends TaskManagerBase {
           err.message.includes('unregistered callers') ||
           (err.responseBody && err.responseBody.includes('Authentication Fails'))) {
         throw new AppError(
-          `缺少${provider}必需的API密钥环境变量 ${process.env.GOOGLE_API_KEY}`,
+          `Missing API key environment variable required for ${provider}`,
           AppErrorCode.ConfigurationError,
           err
         );
@@ -235,14 +235,14 @@ export class BullMQTaskManager extends TaskManagerBase {
       if ((err.data?.error?.code === 'model_not_found') && 
           err.message.includes('model')) {
         throw new AppError(
-          `无效的模型: ${model} 对提供者 ${provider} 不可用`,
+          `Invalid model: ${model} is not available for ${provider}`,
           AppErrorCode.InvalidModel,
           err
         );
       }
       
       throw new AppError(
-        "生成项目计划失败，出现意外错误",
+        "Failed to generate project plan due to an unexpected error",
         AppErrorCode.LLMGenerationError,
         err
       );
@@ -261,9 +261,9 @@ export class BullMQTaskManager extends TaskManagerBase {
       return await fs.readFile(filePath, 'utf-8');
     } catch (error) {
       if (error instanceof Error && error.message.includes('ENOENT')) {
-        throw new AppError(`找不到附件文件: ${filename}`, AppErrorCode.FileReadError, error);
+        throw new AppError(`Failed to read attachment file: ${filename} - File not found`, AppErrorCode.FileReadError, error);
       }
-      throw new AppError(`读取附件文件失败: ${filename}`, AppErrorCode.FileReadError, error);
+      throw new AppError(`Failed to read attachment file: ${filename}`, AppErrorCode.FileReadError, error);
     }
   }
 
