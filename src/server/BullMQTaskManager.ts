@@ -276,17 +276,27 @@ export class BullMQTaskManager extends TaskManagerBase {
     
     try {
       // 首先检查项目是否存在
+      let projectData;
       try {
-        await this.bullMQService.getProjectData(projectId);
+        projectData = await this.bullMQService.getProjectData(projectId);
+        
+        // 检查项目是否已完成
+        if (projectData.completed) {
+          throw new AppError(
+            '项目已完成',
+            AppErrorCode.ProjectAlreadyCompleted
+          );
+        }
       } catch (error) {
-        throw error; // 如果项目不存在，保持原始错误
+        // 如果项目不存在或已完成，保持原始错误
+        throw error; 
       }
       
       // 获取项目任务
       const tasks = await this.bullMQService.listTasks(projectId);
       
       // 如果没有任务，返回错误
-      if (tasks.length === 0) {
+      if (!tasks || tasks.length === 0) {
         throw new AppError(
           '项目没有任务',
           AppErrorCode.TaskNotFound
@@ -294,12 +304,21 @@ export class BullMQTaskManager extends TaskManagerBase {
       }
       
       // 尝试获取下一个任务
-      const nextTask = await this.bullMQService.getNextTask(projectId);
+      let nextTask;
+      try {
+        nextTask = await this.bullMQService.getNextTask(projectId);
+      } catch (error) {
+        // 如果获取下一个任务失败，但原因不是因为找不到任务，则抛出错误
+        if (!(error instanceof AppError) || error.code !== AppErrorCode.TaskNotFound) {
+          throw error;
+        }
+        // 否则继续处理，尝试从任务列表中获取未完成的任务
+      }
       
-      // 如果没有未完成的任务，但有任务列表，说明所有任务已完成
+      // 如果没有未完成的任务，但有任务列表，说明所有任务可能已完成
       if (!nextTask) {
         // 检查所有任务是否都已完成并审批
-        const allCompleted = tasks.every(task => task.status === "done" && task.approved);
+        const allCompleted = tasks.every(task => task && task.status === "done" && task.approved);
         
         if (allCompleted) {
           return {
@@ -308,7 +327,9 @@ export class BullMQTaskManager extends TaskManagerBase {
         }
         
         // 如果不是所有任务都已完成，获取第一个未完成的任务
-        const firstIncompleteTask = tasks.find(task => !(task.status === "done" && task.approved));
+        const firstIncompleteTask = tasks.find(task => 
+          task && !(task.status === "done" && task.approved)
+        );
         
         if (firstIncompleteTask) {
           return {
