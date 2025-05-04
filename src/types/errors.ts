@@ -33,6 +33,17 @@ export enum AppErrorCode {
     LLMGenerationError = 'ERR_5000',
     LLMConfigurationError = 'ERR_5001', // Auth, key issues specifically with LLM provider call
   
+    // BullMQ / Redis Errors (ERR_6xxx)
+    RedisConnectionError = 'ERR_6000', // Redis连接错误
+    QueueCreationError = 'ERR_6001', // 创建队列错误
+    JobProcessingError = 'ERR_6002', // 作业处理错误
+    RedisCommandError = 'ERR_6003', // Redis命令执行错误
+    MigrationError = 'ERR_6004', // 数据迁移错误
+    ServiceNotReadyError = 'ERR_6005', // BullMQ服务未就绪
+    QueueNotFoundError = 'ERR_6006', // 找不到指定队列
+    JobNotFoundError = 'ERR_6007', // 找不到特定作业
+    StorageTypeError = 'ERR_6008', // 存储类型不匹配错误
+  
     // Unknown / Catch-all (ERR_9xxx)
     Unknown = 'ERR_9999'
   }

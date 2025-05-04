@@ -2,7 +2,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { TaskManager } from "./TaskManager.js";
+import { TaskManagerFactory } from "./TaskManagerFactory.js";
 import { ALL_TOOLS, executeToolAndHandleErrors } from "./tools.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
@@ -23,7 +23,7 @@ const server = new Server(
 );
 
 // Create task manager instance
-const taskManager = new TaskManager();
+const taskManager = TaskManagerFactory.createTaskManager();
 
 // Set up request handlers AFTER capabilities are configured
 server.setRequestHandler(ListToolsRequestSchema, async () => {

@@ -1,0 +1,125 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# TaskQueue BullMQ迁移指南
+
+本文档提供了将TaskQueue从JSON文件存储迁移到BullMQ的设计指南和开发路线图。
+
+## 架构概览
+
+TaskQueue MCP将从基于文件的存储系统升级为基于Redis的BullMQ任务队列系统，同时保持现有API接口不变。
+
+```mermaid
+graph TD
+    A[Client API] --> B[TaskManager]
+    B -->|当前| C[FileSystemService]
+    B -->|升级后| D[BullMQService]
+    C --> E[JSON文件]
+    D --> F[Redis/BullMQ]
+```
+
+## 核心组件
+
+### 新增组件
+- **BullMQService**: 代替FileSystemService，管理与Redis的连接、BullMQ队列和工作进程
+- **Queue映射**: 项目和任务队列的管理
+- **事件处理**: 基于BullMQ事件的任务状态管理
+
+### 修改组件
+- **TaskManager**: 接口保持不变，内部实现转为使用BullMQService
+- **数据模型**: 将现有Task/Project模型映射到BullMQ作业模型
+
+## 数据映射策略
+
+1. **项目映射**:
+   - 每个项目对应一个BullMQ队列: `proj:{projectId}`
+   - 项目元数据存储在Redis哈希表中
+   
+2. **任务映射**:
+   - 每个任务为BullMQ队列中的一个作业
+   - 任务数据存储在作业data属性中
+   - 任务状态对应关系:
+     - "not started" → BullMQ "waiting"
+     - "in progress" → BullMQ "active"
+     - "done" → BullMQ "completed"
+
+3. **审批状态**:
+   - 使用Redis附加数据结构存储审批状态
+   - 通过BullMQ事件处理审批流程
+
+## 开发阶段
+
+### 第一阶段: 基础设施
+1. 添加BullMQ依赖
+2. 实现BullMQService基础功能
+3. 实现Redis连接管理
+4. 编写单元测试框架
+
+### 第二阶段: 核心功能迁移
+1. 项目创建与管理
+2. 任务添加与状态更新
+3. 查询与筛选功能
+4. 数据迁移工具
+
+### 第三阶段: 高级功能
+1. 任务流(Flow)与依赖关系
+2. 审批流程自动化
+3. 任务优先级与调度
+4. 性能监控与指标收集
+
+## 文件结构
+
+```
+src/
+  server/
+    BullMQService.ts    <-- 新增
+    RedisManager.ts     <-- 新增
+    TaskManager.ts      <-- 修改
+    QueueFactory.ts     <-- 新增
+  types/
+    data.ts             <-- 扩展
+    bullmq.ts           <-- 新增
+  migration/
+    JsonToBullMQ.ts     <-- 新增
+```
+
+## 测试策略
+
+1. **单元测试**:
+   - 使用Jest mock Redis和BullMQ
+   - 测试BullMQService独立功能
+
+2. **集成测试**:
+   - 使用Docker容器的Redis实例
+   - 验证完整工作流程
+
+3. **迁移测试**:
+   - 验证数据迁移工具准确性
+   - 双模式运行测试
+
+## 最佳实践
+
+1. **错误处理**:
+   - 保持现有的AppError体系
+   - 添加BullMQ特定错误代码
+
+2. **配置管理**:
+   - 通过环境变量配置Redis连接
+   - 支持本地开发与生产环境配置
+
+3. **性能考量**:
+   - 使用连接池优化Redis连接
+   - 设置合理的作业超时与重试策略
+
+4. **监控**:
+   - 利用BullMQ的Prometheus指标
+   - 添加关键操作的遥测记录
+
+## 兼容性保障
+
+在迁移过程中，系统将支持双模式运行:
+1. 基于环境变量决定使用FileSystemService还是BullMQService
+2. 支持数据双向同步以确保一致性
+3. 提供迁移脚本将现有JSON数据导入Redis
