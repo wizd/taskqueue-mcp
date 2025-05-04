@@ -275,18 +275,62 @@ export class BullMQTaskManager extends TaskManagerBase {
     await this.ensureInitialized();
     
     try {
+      // 首先检查项目是否存在
+      try {
+        await this.bullMQService.getProjectData(projectId);
+      } catch (error) {
+        throw error; // 如果项目不存在，保持原始错误
+      }
+      
+      // 获取项目任务
+      const tasks = await this.bullMQService.listTasks(projectId);
+      
+      // 如果没有任务，返回错误
+      if (tasks.length === 0) {
+        throw new AppError(
+          '项目没有任务',
+          AppErrorCode.TaskNotFound
+        );
+      }
+      
+      // 尝试获取下一个任务
       const nextTask = await this.bullMQService.getNextTask(projectId);
       
+      // 如果没有未完成的任务，但有任务列表，说明所有任务已完成
       if (!nextTask) {
+        // 检查所有任务是否都已完成并审批
+        const allCompleted = tasks.every(task => task.status === "done" && task.approved);
+        
+        if (allCompleted) {
+          return {
+            message: `所有任务已完成并审批。等待项目完成审批。`
+          };
+        }
+        
+        // 如果不是所有任务都已完成，获取第一个未完成的任务
+        const firstIncompleteTask = tasks.find(task => !(task.status === "done" && task.approved));
+        
+        if (firstIncompleteTask) {
+          return {
+            projectId,
+            task: firstIncompleteTask
+          };
+        }
+      }
+      
+      // 如果服务返回了下一个任务，使用它
+      if (nextTask) {
         return {
-          message: `所有任务已完成并审批。等待项目完成审批。`
+          projectId,
+          task: this.convertToTask(nextTask)
         };
       }
       
-      return {
-        projectId,
-        task: this.convertToTask(nextTask)
-      };
+      // 如果依然没有任务，返回一个错误消息
+      throw new AppError(
+        '找不到未完成或未审批的任务',
+        AppErrorCode.TaskNotFound
+      );
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
