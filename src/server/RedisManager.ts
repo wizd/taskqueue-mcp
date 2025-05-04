@@ -1,4 +1,5 @@
-import IORedis, { Redis, RedisOptions } from 'ioredis';
+import { Redis, RedisOptions } from 'ioredis';
+const IORedis = require('ioredis');
 import { AppError, AppErrorCode } from '../types/errors.js';
 
 /**
@@ -41,17 +42,33 @@ export class RedisManager {
     }
 
     try {
-      this.connection = new IORedis(this.connectionOptions);
+      // 创建一个Redis连接字符串
+      const host = this.connectionOptions.host || 'localhost';
+      const port = this.connectionOptions.port || 6379;
+      const auth = this.connectionOptions.password 
+        ? `:${this.connectionOptions.password}@` 
+        : '';
+      const db = this.connectionOptions.db || 0;
+      
+      const connectionUrl = `redis://${auth}${host}:${port}/${db}`;
+      this.connection = new IORedis(connectionUrl);
       
       // 设置错误处理器
-      this.connection.on('error', (error) => {
-        console.error('Redis连接错误:', error);
-      });
+      if (this.connection) {
+        this.connection.on('error', (error: Error) => {
+          console.error('Redis连接错误:', error);
+        });
 
-      // 测试连接
-      await this.connection.ping();
-      this.isInitialized = true;
-      return true;
+        // 测试连接
+        await this.connection.ping();
+        this.isInitialized = true;
+        return true;
+      }
+      
+      throw new AppError(
+        'Redis连接初始化失败',
+        AppErrorCode.RedisConnectionError
+      );
     } catch (error) {
       console.error('Redis连接初始化失败:', error);
       this.isInitialized = false;
@@ -74,7 +91,7 @@ export class RedisManager {
         AppErrorCode.RedisConnectionError
       );
     }
-    return this.connection;
+    return this.connection as Redis;
   }
 
   /**

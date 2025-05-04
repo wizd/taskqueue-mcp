@@ -1,5 +1,6 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { TaskManager } from "./TaskManager.js";
+import { TaskManagerBase } from "./TaskManagerBase.js";
 import { toolExecutorMap } from "./toolExecutors.js";
 import { AppError, AppErrorCode } from "../types/errors.js";
 import { McpError, CallToolResult, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
@@ -455,7 +456,7 @@ export const ALL_TOOLS: Tool[] = [
 export async function executeToolAndHandleErrors(
   toolName: string,
   args: Record<string, unknown>,
-  taskManager: TaskManager
+  taskManager: TaskManagerBase
 ): Promise<CallToolResult> {
   const executor = toolExecutorMap.get(toolName);
 

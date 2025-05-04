@@ -1,4 +1,5 @@
 import { TaskManager } from "./TaskManager.js";
+import { TaskManagerBase } from "./TaskManagerBase.js";
 import { AppError, AppErrorCode } from "../types/errors.js";
 
 /**
@@ -12,12 +13,12 @@ interface ToolExecutor {
   
   /**
    * Executes the tool's logic with the given arguments
-   * @param taskManager The TaskManager instance to use for task-related operations
+   * @param taskManager The TaskManagerBase instance to use for task-related operations
    * @param args The arguments passed to the tool as a key-value record
    * @returns A promise that resolves to the raw data from TaskManager
    */
   execute: (
-    taskManager: TaskManager,
+    taskManager: TaskManagerBase,
     args: Record<string, unknown>
   ) => Promise<unknown>;
 }
@@ -328,24 +329,11 @@ const deleteProjectToolExecutor: ToolExecutor = {
   name: "delete_project",
   async execute(taskManager, args) {
     const projectId = validateProjectId(args.projectId);
-
-    const projectIndex = taskManager["data"].projects.findIndex(
-      (p) => p.projectId === projectId
-    );
-    if (projectIndex === -1) {
-      throw new AppError(
-        `Project not found: ${projectId}`,
-        AppErrorCode.ProjectNotFound
-      );
-    }
-
-    taskManager["data"].projects.splice(projectIndex, 1);
-    await taskManager["saveTasks"]();
-
-    return {
-      status: "project_deleted",
-      message: `Project ${projectId} has been deleted.`,
-    };
+    
+    // 使用抽象的deleteProject方法
+    const resultData = await taskManager.deleteProject(projectId);
+    
+    return resultData;
   },
 };
 toolExecutorMap.set(deleteProjectToolExecutor.name, deleteProjectToolExecutor);

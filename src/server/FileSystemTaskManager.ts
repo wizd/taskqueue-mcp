@@ -684,4 +684,29 @@ export class FileSystemTaskManager extends TaskManagerBase {
       tasks: project.tasks,
     };
   }
+
+  /**
+   * 删除项目
+   * @param projectId 项目ID
+   */
+  public async deleteProject(projectId: string): Promise<{ status: string; message: string }> {
+    await this.ensureInitialized();
+    await this.reloadFromDisk();
+    
+    const projectIndex = this.data.projects.findIndex(p => p.projectId === projectId);
+    if (projectIndex === -1) {
+      throw new AppError(
+        `Project not found: ${projectId}`,
+        AppErrorCode.ProjectNotFound
+      );
+    }
+    
+    this.data.projects.splice(projectIndex, 1);
+    await this.saveTasks();
+    
+    return {
+      status: "project_deleted",
+      message: `Project ${projectId} has been deleted.`
+    };
+  }
 } 

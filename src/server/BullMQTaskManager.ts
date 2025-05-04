@@ -593,6 +593,39 @@ export class BullMQTaskManager extends TaskManagerBase {
   }
 
   /**
+   * 删除项目
+   * @param projectId 项目ID 
+   */
+  public async deleteProject(projectId: string): Promise<{ status: string; message: string }> {
+    await this.ensureInitialized();
+    
+    try {
+      // BullMQService中需要实现deleteProject方法
+      // 为简单起见，我们在这里通过抛出错误说明需要实现
+      throw new AppError(
+        '删除项目功能尚未在BullMQService中实现',
+        AppErrorCode.Unknown
+      );
+      
+      // 实现后应该是类似这样：
+      // await this.bullMQService.deleteProject(projectId);
+      // return {
+      //   status: "project_deleted",
+      //   message: `Project ${projectId} has been deleted.`
+      // };
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        '删除项目失败',
+        AppErrorCode.Unknown,
+        error
+      );
+    }
+  }
+
+  /**
    * 将BullMQTaskData转换为Task接口
    * @param taskData BullMQ任务数据
    * @returns Task接口数据

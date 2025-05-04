@@ -133,4 +133,10 @@ export abstract class TaskManagerBase {
    * 从磁盘重新加载数据
    */
   public abstract reloadFromDisk(): Promise<void>;
+
+  /**
+   * 删除项目
+   * @param projectId 项目ID
+   */
+  public abstract deleteProject(projectId: string): Promise<{ status: string; message: string }>;
 } 
