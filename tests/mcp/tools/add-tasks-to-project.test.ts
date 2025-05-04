@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { setupTestContext, teardownTestContext, TestContext, createTestProject, verifyCallToolResult, verifyTaskInFile, verifyToolExecutionError, verifyProtocolError } from '../test-helpers.js';
+import { 
+  setupTestContext, 
+  teardownTestContext, 
+  TestContext, 
+  createTestProject, 
+  verifyCallToolResult, 
+  verifyTask, 
+  verifyToolExecutionError, 
+  verifyProtocolError 
+} from '../test-helpers.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 describe('add_tasks_to_project Tool', () => {
@@ -38,8 +47,8 @@ describe('add_tasks_to_project Tool', () => {
       expect(responseData.newTasks).toHaveLength(1);
       const newTask = responseData.newTasks[0];
 
-      // Verify task was added to file
-      await verifyTaskInFile(context.testFilePath, projectId, newTask.id, {
+      // Verify task was added using BullMQ verification
+      await verifyTask(context, projectId, newTask.id, {
         title: "New Task",
         description: "A task to add",
         status: "not started",
@@ -68,7 +77,7 @@ describe('add_tasks_to_project Tool', () => {
 
       // Verify all tasks were added
       for (let i = 0; i < tasks.length; i++) {
-        await verifyTaskInFile(context.testFilePath, projectId, responseData.newTasks[i].id, {
+        await verifyTask(context, projectId, responseData.newTasks[i].id, {
           title: tasks[i].title,
           description: tasks[i].description,
           status: "not started"
@@ -94,7 +103,7 @@ describe('add_tasks_to_project Tool', () => {
       const responseData = JSON.parse((result.content[0] as { text: string }).text);
       const newTask = responseData.newTasks[0];
       
-      await verifyTaskInFile(context.testFilePath, projectId, newTask.id, {
+      await verifyTask(context, projectId, newTask.id, {
         title: "Task with Recommendations",
         description: "Task with specific recommendations",
         toolRecommendations: "Use tool A and B",
@@ -143,7 +152,7 @@ describe('add_tasks_to_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(result, /Project non-existent-project not found/);
+      verifyToolExecutionError(result, /项目 non-existent-project 不存在/);
     });
 
     it('should return error for task with empty title', async () => {
