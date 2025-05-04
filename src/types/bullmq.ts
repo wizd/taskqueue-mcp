@@ -66,7 +66,7 @@ export const RedisKeys = {
   /** 项目任务清单集合 */
   projectTasks: (projectId: string) => `project:${projectId}:tasks`,
   /** 获取项目队列名称 */
-  projectQueueName: (projectId: string) => `proj:${projectId}`,
+  projectQueueName: (projectId: string) => `proj_${projectId}`,
 }
 
 /**

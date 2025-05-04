@@ -15,10 +15,10 @@
 		"dist/src/**/*.js.map"
 	],
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc && shx cp src/server/redisLoader.cjs dist/src/server/",
 		"start": "node dist/src/server/index.js",
-		"dev": "tsc && node dist/src/server/index.js",
-		"test": "tsc && NODE_OPTIONS=--experimental-vm-modules jest",
+		"dev": "tsc && shx cp src/server/redisLoader.cjs dist/src/server/ && node dist/src/server/index.js",
+		"test": "tsc && shx cp src/server/redisLoader.cjs dist/src/server/ && NODE_OPTIONS=--experimental-vm-modules jest",
 		"cli": "node dist/src/cli.js"
 	},
 	"repository": {

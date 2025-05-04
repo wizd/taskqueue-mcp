@@ -133,7 +133,7 @@ describe('generate_project_plan Tool', () => {
           arguments: {
             prompt: testPrompt,
             provider: "google",
-            model: "gemini-2.0-flash-001",
+            model: "gemini-2.0-flash-lite",
             attachments: [requirementsPath]
           }
         }) as CallToolResult;

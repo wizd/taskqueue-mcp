@@ -187,23 +187,27 @@ export class BullMQTaskManager extends TaskManagerBase {
     }
 
     // 配置适当的提供者
-    let modelProvider;
-    switch (provider) {
-      case "openai":
-        const { openai } = await import("@ai-sdk/openai");
-        modelProvider = openai(model);
-        break;
-      case "google":
-        const { google } = await import("@ai-sdk/google");
-        modelProvider = google(model);
-        break;
-      case "deepseek":
-        const { deepseek } = await import("@ai-sdk/deepseek");
-        modelProvider = deepseek(model);
-        break;
-      default:
-        throw new AppError(`无效的提供者: ${provider}`, AppErrorCode.InvalidProvider);
-    }
+    // Import and configure the appropriate provider
+    const { google } = await import("@ai-sdk/google");
+    const modelProvider = google("gemini-2.0-flash-lite");
+
+    // let modelProvider;
+    // switch (provider) {
+    //   case "openai":
+    //     const { openai } = await import("@ai-sdk/openai");
+    //     modelProvider = openai(model);
+    //     break;
+    //   case "google":
+    //     const { google } = await import("@ai-sdk/google");
+    //     modelProvider = google(model);
+    //     break;
+    //   case "deepseek":
+    //     const { deepseek } = await import("@ai-sdk/deepseek");
+    //     modelProvider = deepseek(model);
+    //     break;
+    //   default:
+    //     throw new AppError(`Invalid provider: ${provider}`, AppErrorCode.InvalidProvider);
+    // }
 
     try {
       const { object } = await generateObject({
@@ -215,13 +219,14 @@ export class BullMQTaskManager extends TaskManagerBase {
       // 使用BullMQTaskManager的createProject方法创建项目
       return await this.createProject(prompt, object.tasks, object.projectPlan);
     } catch (err: any) {
+      console.log("err from generateProjectPlan", err);
       if (err.name === 'LoadAPIKeyError' || 
           err.message.includes('API key is missing') || 
           err.message.includes('You didn\'t provide an API key') ||
           err.message.includes('unregistered callers') ||
           (err.responseBody && err.responseBody.includes('Authentication Fails'))) {
         throw new AppError(
-          `缺少${provider}必需的API密钥环境变量`,
+          `缺少${provider}必需的API密钥环境变量 ${process.env.GOOGLE_API_KEY}`,
           AppErrorCode.ConfigurationError,
           err
         );

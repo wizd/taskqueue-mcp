@@ -1,6 +1,10 @@
-import { Redis, RedisOptions } from 'ioredis';
-const IORedis = require('ioredis');
+// 从ioredis导入类型，但实例化时使用中间层
+import type { Redis, RedisOptions } from 'ioredis';
+// 删除旧的require导入
 import { AppError, AppErrorCode } from '../types/errors.js';
+// 移除多余的函数
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 /**
  * Redis连接管理器
@@ -42,16 +46,23 @@ export class RedisManager {
     }
 
     try {
-      // 创建一个Redis连接字符串
-      const host = this.connectionOptions.host || 'localhost';
-      const port = this.connectionOptions.port || 6379;
-      const auth = this.connectionOptions.password 
-        ? `:${this.connectionOptions.password}@` 
-        : '';
-      const db = this.connectionOptions.db || 0;
+      // 使用CJS加载器导入Redis
+      // 计算CJS文件的绝对路径
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
+      const redisLoaderPath = path.resolve(__dirname, 'redisLoader.cjs');
       
-      const connectionUrl = `redis://${auth}${host}:${port}/${db}`;
-      this.connection = new IORedis(connectionUrl);
+      // 动态导入CJS模块
+      const RedisClient = (await import(redisLoaderPath)).default;
+      
+      // 创建Redis连接
+      this.connection = new RedisClient({
+        host: this.connectionOptions.host || 'localhost',
+        port: this.connectionOptions.port || 6379,
+        password: this.connectionOptions.password,
+        db: this.connectionOptions.db || 0,
+        retryStrategy: this.connectionOptions.retryStrategy,
+        maxRetriesPerRequest: this.connectionOptions.maxRetriesPerRequest
+      });
       
       // 设置错误处理器
       if (this.connection) {
@@ -91,7 +102,7 @@ export class RedisManager {
         AppErrorCode.RedisConnectionError
       );
     }
-    return this.connection as Redis;
+    return this.connection;
   }
 
   /**

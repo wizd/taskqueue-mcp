@@ -3,14 +3,26 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Task, Project, TaskManagerFile } from "../../src/types/data.js";
 import { FileSystemService } from "../../src/server/FileSystemService.js";
+import { MigrationMode } from "../../src/types/bullmq.js";
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs/promises';
 import process from 'node:process';
 import dotenv from 'dotenv';
 
-// Load environment variables from .env file
-dotenv.config();
+// 首先尝试加载.env文件中的环境变量
+const result = dotenv.config();
+if (result.error) {
+  console.warn('警告: 无法加载.env文件:', result.error);
+}
+
+// 记录重要的API密钥是否存在
+const envCheck = {
+  OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+  GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY
+};
+console.log('环境变量检查:', envCheck);
 
 export interface TestContext {
   client: Client;
@@ -19,6 +31,7 @@ export interface TestContext {
   testFilePath: string;
   taskCounter: number;
   fileService: FileSystemService;
+  storageMode: MigrationMode;
 }
 
 /**
@@ -41,6 +54,31 @@ export async function setupTestContext(
   if (!skipFileInit) {
     await fileService.saveTasks({ projects: [] });
   }
+  
+  // Determine storage mode from environment or custom env
+  const storageMode = (customEnv?.TASKQUEUE_STORAGE_MODE || process.env.TASKQUEUE_STORAGE_MODE || MigrationMode.FILE_ONLY) as MigrationMode;
+  
+  // Get Redis configuration from environment
+  const redisConfig = {
+    REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+    REDIS_PORT: process.env.REDIS_PORT || '6379',
+    REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
+    REDIS_DB: process.env.REDIS_DB || '0'
+  };
+
+  // 确保API密钥环境变量存在且被传递给子进程
+  const apiKeys = {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+    GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY || '',
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || ''
+  };
+
+  // 记录API密钥状态（只显示是否存在，不显示实际值）
+  console.log('使用API密钥状态:', {
+    OPENAI_API_KEY: !!apiKeys.OPENAI_API_KEY,
+    GOOGLE_GENERATIVE_AI_API_KEY: !!apiKeys.GOOGLE_GENERATIVE_AI_API_KEY,
+    DEEPSEEK_API_KEY: !!apiKeys.DEEPSEEK_API_KEY
+  });
 
   // Set up the transport with environment variable for test file
   const transport = new StdioClientTransport({
@@ -50,12 +88,13 @@ export async function setupTestContext(
       TASK_MANAGER_FILE_PATH: testFilePath,
       NODE_ENV: "test",
       DEBUG: "mcp:*",  // Enable MCP debug logging
-      // Use custom env if provided, otherwise use default API keys
-      ...(customEnv || {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-        GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? '',
-        DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? ''
-      })
+      TASKQUEUE_STORAGE_MODE: storageMode,
+      // Include Redis configuration when using BullMQ modes
+      ...(storageMode !== MigrationMode.FILE_ONLY ? redisConfig : {}),
+      // 使用自定义环境变量或默认API密钥
+      ...(customEnv || apiKeys),
+      // 确保进程环境中的其他变量也被传递
+      ...process.env
     }
   });
 
@@ -90,7 +129,7 @@ export async function setupTestContext(
     throw error;
   }
 
-  return { client, transport, tempDir, testFilePath, taskCounter: 0, fileService };
+  return { client, transport, tempDir, testFilePath, taskCounter: 0, fileService, storageMode };
 }
 
 /**
@@ -101,6 +140,11 @@ export async function teardownTestContext(context: TestContext) {
     // Ensure transport is properly closed
     if (context.transport) {
       context.transport.close();
+    }
+    
+    // Give Redis connections time to properly close
+    if (context.storageMode !== MigrationMode.FILE_ONLY) {
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
   } catch (err) {
     console.error('Error closing transport:', err);
@@ -298,4 +342,79 @@ export async function createTestTaskInFile(filePath: string, projectId: string, 
   project.tasks.push(newTask);
   await writeTaskManagerFile(filePath, data);
   return newTask;
+}
+
+/**
+ * 验证不同存储模式下的测试操作
+ * 根据当前存储模式执行适当的验证
+ */
+export async function verifyStorageConsistency(
+  context: TestContext, 
+  projectId: string,
+  verifyCallback: (client: Client) => Promise<any>
+): Promise<void> {
+  // 执行客户端验证
+  await verifyCallback(context.client);
+  
+  // 如果是双写模式或仅BullMQ模式，添加额外延迟以确保数据同步
+  if (context.storageMode === MigrationMode.DUAL_WRITE || context.storageMode === MigrationMode.READ_BULLMQ_WRITE_BOTH) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // 这里可以添加其他特定模式的验证逻辑
+    // 例如，如果需要，可以通过工具调用验证BullMQ状态
+    await context.client.callTool({
+      name: "read_project",
+      arguments: { projectId }
+    });
+  }
+}
+
+/**
+ * 创建特定存储模式的测试上下文
+ */
+export async function setupTestContextWithMode(
+  mode: MigrationMode,
+  options: {
+    customFilePath?: string,
+    skipFileInit?: boolean,
+    customEnv?: Record<string, string>
+  } = {}
+): Promise<TestContext> {
+  const customEnv = {
+    ...options.customEnv,
+    TASKQUEUE_STORAGE_MODE: mode
+  };
+  
+  return setupTestContext(
+    options.customFilePath,
+    options.skipFileInit || false,
+    customEnv
+  );
+}
+
+/**
+ * 创建一个Redis测试上下文，使用随机DB以避免测试冲突
+ */
+export async function setupRedisTestContext(
+  options: {
+    mode: MigrationMode,
+    customFilePath?: string,
+    skipFileInit?: boolean,
+    customEnv?: Record<string, string>
+  } = { mode: MigrationMode.BULLMQ_ONLY }
+): Promise<TestContext> {
+  // 使用随机数据库编号以避免测试冲突
+  const randomDb = Math.floor(Math.random() * 10) + 1; // 使用1-10范围内的数据库
+  
+  const customEnv = {
+    ...options.customEnv,
+    TASKQUEUE_STORAGE_MODE: options.mode,
+    REDIS_DB: String(randomDb)
+  };
+  
+  return setupTestContext(
+    options.customFilePath,
+    options.skipFileInit || false,
+    customEnv
+  );
 } 
