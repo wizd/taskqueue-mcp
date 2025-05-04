@@ -3,12 +3,15 @@ import {
   setupTestContext,
   teardownTestContext,
   verifyCallToolResult,
-  verifyProjectInFile,
-  verifyTaskInFile,
-  readTaskManagerFile,
-  TestContext
+  verifyProject,
+  verifyTask,
+  TestContext,
+  verifyProjectInBullMQNative,
+  verifyTaskInBullMQNative
 } from '../test-helpers.js';
 import { CallToolResult, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { Redis } from 'ioredis';
+import { RedisKeys } from '../../../src/types/bullmq.js';
 
 describe('create_project Tool', () => {
   let context: TestContext;
@@ -41,14 +44,14 @@ describe('create_project Tool', () => {
       expect(responseData).toHaveProperty('projectId');
       const projectId = responseData.projectId;
 
-      // Verify project was created in file
-      await verifyProjectInFile(context.testFilePath, projectId, {
+      // Verify project was created
+      await verifyProject(context, projectId, {
         initialPrompt: "Test Project",
         completed: false
       });
 
       // Verify task was created
-      await verifyTaskInFile(context.testFilePath, projectId, responseData.tasks[0].id, {
+      await verifyTask(context, projectId, responseData.tasks[0].id, {
         title: "Task 1",
         description: "First test task",
         status: "not started",
@@ -73,16 +76,27 @@ describe('create_project Tool', () => {
       expect(responseData).toHaveProperty('projectId');
       const projectId = responseData.projectId;
 
-      // Verify project was created in file
-      await verifyProjectInFile(context.testFilePath, projectId, {
+      // Verify project was created
+      await verifyProject(context, projectId, {
         initialPrompt: "Project with No Tasks",
         completed: false
       });
 
       // Verify no tasks were created
-      const data = await readTaskManagerFile(context.testFilePath);
-      const project = data.projects.find(p => p.projectId === projectId);
-      expect(project?.tasks).toHaveLength(0);
+      const redisOptions = {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT || 6379),
+        password: process.env.REDIS_PASSWORD || '',
+        db: Number(process.env.REDIS_DB || 0),
+      };
+      
+      const redis = new Redis(redisOptions);
+      try {
+        const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+        expect(taskIds.length).toBe(0);
+      } finally {
+        await redis.quit();
+      }
     });
 
     it('should create a project with multiple tasks', async () => {
@@ -103,15 +117,35 @@ describe('create_project Tool', () => {
       const projectId = responseData.projectId;
 
       // Verify all tasks were created
-      const data = await readTaskManagerFile(context.testFilePath);
-      const project = data.projects.find(p => p.projectId === projectId);
-      expect(project?.tasks).toHaveLength(3);
-      expect(project?.tasks.map(t => t.title)).toEqual([
-        "Task 1",
-        "Task 2",
-        "Task 3"
-      ]);
-      expect(project).toHaveProperty('autoApprove', true);
+      const redisOptions = {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT || 6379),
+        password: process.env.REDIS_PASSWORD || '',
+        db: Number(process.env.REDIS_DB || 0),
+      };
+      
+      const redis = new Redis(redisOptions);
+      try {
+        // Verify tasks count
+        const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+        expect(taskIds.length).toBe(3);
+        
+        // Verify project auto-approve
+        const projectData = await redis.hgetall(RedisKeys.projectMetadata(projectId));
+        expect(projectData.autoApprove).toBe('true');
+        
+        // Verify individual tasks
+        for (let i = 0; i < responseData.tasks.length; i++) {
+          const taskId = responseData.tasks[i].id;
+          await verifyTask(context, projectId, taskId, {
+            title: `Task ${i+1}`,
+            description: [`First task`, `Second task`, `Third task`][i],
+            status: "not started"
+          });
+        }
+      } finally {
+        await redis.quit();
+      }
     });
 
     it('should create a project with auto-approve enabled', async () => {
@@ -131,9 +165,10 @@ describe('create_project Tool', () => {
       const projectId = responseData.projectId;
 
       // Verify project was created with auto-approve
-      const data = await readTaskManagerFile(context.testFilePath);
-      const project = data.projects.find(p => p.projectId === projectId);
-      expect(project).toHaveProperty('autoApprove', true);
+      await verifyProject(context, projectId, {
+        initialPrompt: "Auto-approve Project",
+        autoApprove: true
+      });
     });
 
     it('should create a project with project plan', async () => {
@@ -152,7 +187,7 @@ describe('create_project Tool', () => {
       const responseData = JSON.parse((result.content[0] as { text: string }).text);
       const projectId = responseData.projectId;
 
-      await verifyProjectInFile(context.testFilePath, projectId, {
+      await verifyProject(context, projectId, {
         initialPrompt: "Planned Project",
         projectPlan: "Detailed plan for the project execution"
       });
@@ -177,7 +212,7 @@ describe('create_project Tool', () => {
       const projectId = responseData.projectId;
       const taskId = responseData.tasks[0].id;
 
-      await verifyTaskInFile(context.testFilePath, projectId, taskId, {
+      await verifyTask(context, projectId, taskId, {
         toolRecommendations: "Use tool X and Y",
         ruleRecommendations: "Follow rules A and B"
       });

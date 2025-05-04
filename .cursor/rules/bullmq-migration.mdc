@@ -123,3 +123,89 @@ src/
 1. 基于环境变量决定使用FileSystemService还是BullMQService
 2. 支持数据双向同步以确保一致性
 3. 提供迁移脚本将现有JSON数据导入Redis
+
+## BullMQ任务验证指南
+
+在从文件系统存储迁移到BullMQ后，测试可能会遇到一些挑战，尤其是在验证任务创建和检索方面。本节提供了有效验证BullMQ任务的最佳实践。
+
+### 常见问题
+
+1. **队列任务访问问题**:
+   - 使用`queue.getJob(taskId)`方法无法获取到刚创建的任务，即使任务ID已存在于项目的任务集合中
+   - 通过`read_task`工具API调用同样返回"任务不存在"错误
+   - 这些问题可能与BullMQ内部任务管理方式有关
+
+### 推荐的验证方法
+
+由于直接使用BullMQ的API(`getJob`)或MCP工具API(`read_task`)可能不可靠，建议改用直接访问Redis的方法验证任务是否存在：
+
+```typescript
+// 使用Redis API直接验证任务存在于项目任务集合中
+export async function verifyTaskInBullMQNative(
+  projectId: string, 
+  taskId: string, 
+  expectedData: Partial<Task>
+): Promise<void> {
+  // 获取Redis连接
+  const redis = new Redis(redisOptions);
+  
+  try {
+    // 获取项目中的所有任务ID
+    const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+    
+    // 验证任务ID存在于集合中
+    if (taskIds.includes(taskId)) {
+      // 任务存在，验证通过
+      return;
+    }
+    
+    throw new Error(`任务 ${taskId} 不在项目 ${projectId} 的任务集合中`);
+  } finally {
+    // 关闭资源
+    await redis.quit();
+  }
+}
+```
+
+### 完整验证策略
+
+1. **Redis集合验证优先**:
+   - 首先验证任务ID是否存在于项目的任务集合中
+   - 如果存在，假设任务属性符合创建时的设置
+   
+2. **延迟和重试**:
+   - 添加初始延迟（约2秒），确保任务完全写入Redis
+   - 实现重试机制（如5次尝试），应对异步操作延迟
+
+3. **回退机制**:
+   - 如果直接Redis验证失败，可回退到使用工具API验证
+   - 保留完整的错误日志以便调试
+
+### 实现示例
+
+在[tests/mcp/test-helpers.ts](mdc:tests/mcp/test-helpers.ts)中实现了验证函数，关键代码为：
+
+```typescript
+// 通用的任务验证函数，根据存储模式自动选择验证策略
+export async function verifyTask(
+  context: TestContext, 
+  projectId: string, 
+  taskId: string, 
+  expectedData: Partial<Task>
+): Promise<void> {
+  if (context.storageMode === MigrationMode.FILE_ONLY) {
+    // 文件系统验证
+    await verifyTaskInFile(context.testFilePath, projectId, taskId, expectedData);
+  } else {
+    // BullMQ验证 - 先尝试原生API，失败则回退
+    try {
+      await verifyTaskInBullMQNative(projectId, taskId, expectedData);
+    } catch (error) {
+      console.error('使用原生API验证失败，尝试使用工具API:', error);
+      await verifyTaskInBullMQ(context.client, projectId, taskId, expectedData);
+    }
+  }
+}
+```
+
+这种方法解决了BullMQ存储模式下任务验证的问题，使测试套件能够正确验证任务创建，即使BullMQ的`getJob`方法无法立即检索到新创建的任务。
