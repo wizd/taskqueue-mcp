@@ -837,6 +837,72 @@ export class BullMQService {
   }
 
   /**
+   * 删除项目
+   * @param projectId 项目ID
+   * @returns 成功消息
+   */
+  public async deleteProject(projectId: string): Promise<string> {
+    this.ensureReady();
+    
+    try {
+      const redis = this.redisManager.getConnection();
+      
+      // 检查项目是否存在
+      const projectExists = await redis.exists(RedisKeys.projectMetadata(projectId));
+      if (projectExists === 0) {
+        throw new AppError(
+          `项目 ${projectId} 不存在`,
+          AppErrorCode.ProjectNotFound
+        );
+      }
+      
+      // 获取项目任务列表
+      const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+      const queue = this.getProjectQueue(projectId);
+      
+      // 删除项目中的所有任务
+      for (const taskId of taskIds) {
+        // 获取任务
+        const job = await queue.getJob(taskId);
+        
+        if (job) {
+          // 删除任务
+          await job.remove();
+        }
+        
+        // 从项目任务集合中移除
+        await redis.srem(RedisKeys.projectTasks(projectId), taskId);
+      }
+      
+      // 删除项目元数据
+      await redis.del(RedisKeys.projectMetadata(projectId));
+      
+      // 删除项目任务集合
+      await redis.del(RedisKeys.projectTasks(projectId));
+      
+      // 尝试删除队列
+      try {
+        await queue.obliterate();
+        this.queues.delete(RedisKeys.projectQueueName(projectId));
+      } catch (error) {
+        console.warn(`清理项目队列时出错: ${error}`);
+        // 即使清理队列失败，我们仍然继续删除项目
+      }
+      
+      return `已删除项目 ${projectId}`;
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        '删除项目失败',
+        AppErrorCode.JobProcessingError,
+        error
+      );
+    }
+  }
+
+  /**
    * 读取项目
    * @param projectId 项目ID
    * @returns 项目数据及其任务

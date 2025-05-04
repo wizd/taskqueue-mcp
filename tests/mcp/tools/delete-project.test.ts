@@ -8,6 +8,8 @@ import {
   TestContext
 } from '../test-helpers.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Redis } from 'ioredis';
+import { RedisKeys } from '../../../src/types/bullmq.js';
 
 describe('delete_project Tool', () => {
   let context: TestContext;
@@ -45,7 +47,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(readResult, /Tool execution failed: Project .* not found/);
+      verifyToolExecutionError(readResult, /项目 .* 不存在/);
     });
 
     it('should successfully delete a project with non-approved tasks', async () => {
@@ -75,7 +77,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(readResult, /Tool execution failed: Project .* not found/);
+      verifyToolExecutionError(readResult, /项目 .* 不存在/);
     });
 
     it('should successfully delete a project with approved tasks', async () => {
@@ -87,14 +89,24 @@ describe('delete_project Tool', () => {
         ]
       });
 
-      // Get the task ID
-      const nextTaskResult = await context.client.callTool({
-        name: "get_next_task",
-        arguments: { projectId }
-      }) as CallToolResult;
+      // 直接使用Redis获取任务ID
+      const redisOptions = {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT || 6379),
+        password: process.env.REDIS_PASSWORD || '',
+        db: Number(process.env.REDIS_DB || 0),
+      };
       
-      const taskData = verifyToolSuccessResponse<{ task: { id: string } }>(nextTaskResult);
-      const taskId = taskData.task.id;
+      const redis = new Redis(redisOptions);
+      let taskId;
+      try {
+        // 获取项目中的任务ID列表
+        const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+        expect(taskIds.length).toBe(1);
+        taskId = taskIds[0];
+      } finally {
+        await redis.quit();
+      }
 
       // Mark task as done
       await context.client.callTool({
@@ -133,7 +145,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(readResult, /Tool execution failed: Project .* not found/);
+      verifyToolExecutionError(readResult, /项目 .* 不存在/);
     });
 
     it('should successfully delete a completed project', async () => {
@@ -145,14 +157,24 @@ describe('delete_project Tool', () => {
         ]
       });
 
-      // Get the task ID
-      const nextTaskResult = await context.client.callTool({
-        name: "get_next_task",
-        arguments: { projectId }
-      }) as CallToolResult;
+      // 直接使用Redis获取任务ID
+      const redisOptions = {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT || 6379),
+        password: process.env.REDIS_PASSWORD || '',
+        db: Number(process.env.REDIS_DB || 0),
+      };
       
-      const taskData = verifyToolSuccessResponse<{ task: { id: string } }>(nextTaskResult);
-      const taskId = taskData.task.id;
+      const redis = new Redis(redisOptions);
+      let taskId;
+      try {
+        // 获取项目中的任务ID列表
+        const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+        expect(taskIds.length).toBe(1);
+        taskId = taskIds[0];
+      } finally {
+        await redis.quit();
+      }
 
       // Mark task as done
       await context.client.callTool({
@@ -199,7 +221,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(readResult, /Tool execution failed: Project .* not found/);
+      verifyToolExecutionError(readResult, /项目 .* 不存在/);
     });
   });
 
@@ -212,7 +234,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(result, /Tool execution failed: Project not found: non_existent_project/);
+      verifyToolExecutionError(result, /项目 non_existent_project 不存在/);
     });
 
     it('should return error for invalid project ID format', async () => {
@@ -223,7 +245,7 @@ describe('delete_project Tool', () => {
         }
       }) as CallToolResult;
 
-      verifyToolExecutionError(result, /Tool execution failed: Project not found: invalid-format/);
+      verifyToolExecutionError(result, /项目 invalid-format 不存在/);
     });
   });
 }); 

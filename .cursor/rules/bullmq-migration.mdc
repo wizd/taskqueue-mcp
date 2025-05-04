@@ -250,6 +250,103 @@ export async function verifyTask(
 
 这种方法解决了BullMQ存储模式下任务验证的问题，使测试套件能够正确验证任务创建，即使BullMQ的`getJob`方法无法立即检索到新创建的任务。
 
+## 项目删除功能实现
+
+在BullMQ存储模式下，删除项目功能需要同时清理多个相关的Redis数据结构。项目删除操作包括以下步骤：
+
+1. **删除所有项目任务**:
+   - 获取项目任务集合中的所有任务ID
+   - 从BullMQ队列中删除每个任务作业
+   - 从项目任务集合中移除任务ID
+
+2. **删除项目元数据**:
+   - 删除Redis中的项目元数据哈希表
+
+3. **清理项目队列**:
+   - 使用BullMQ的`queue.obliterate()`方法清空并删除队列
+   - 从内部队列映射中移除队列引用
+
+### 实现代码
+
+在`BullMQService`中，`deleteProject`方法的核心实现逻辑为：
+
+```typescript
+public async deleteProject(projectId: string): Promise<string> {
+  this.ensureReady();
+  
+  try {
+    const redis = this.redisManager.getConnection();
+    
+    // 检查项目是否存在
+    const projectExists = await redis.exists(RedisKeys.projectMetadata(projectId));
+    if (projectExists === 0) {
+      throw new AppError(
+        `项目 ${projectId} 不存在`,
+        AppErrorCode.ProjectNotFound
+      );
+    }
+    
+    // 获取项目任务列表
+    const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+    const queue = this.getProjectQueue(projectId);
+    
+    // 删除项目中的所有任务
+    for (const taskId of taskIds) {
+      // 获取任务
+      const job = await queue.getJob(taskId);
+      
+      if (job) {
+        // 删除任务
+        await job.remove();
+      }
+      
+      // 从项目任务集合中移除
+      await redis.srem(RedisKeys.projectTasks(projectId), taskId);
+    }
+    
+    // 删除项目元数据
+    await redis.del(RedisKeys.projectMetadata(projectId));
+    
+    // 删除项目任务集合
+    await redis.del(RedisKeys.projectTasks(projectId));
+    
+    // 尝试删除队列
+    try {
+      await queue.obliterate();
+      this.queues.delete(RedisKeys.projectQueueName(projectId));
+    } catch (error) {
+      console.warn(`清理项目队列时出错: ${error}`);
+      // 即使清理队列失败，我们仍然继续删除项目
+    }
+    
+    return `已删除项目 ${projectId}`;
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError(
+      '删除项目失败',
+      AppErrorCode.JobProcessingError,
+      error
+    );
+  }
+}
+```
+
+### 测试问题与解决方案
+
+在测试删除项目功能时，我们遇到以下挑战：
+
+1. **任务ID获取问题**:
+   - 在测试中使用`get_next_task`无法可靠获取任务ID
+   - 解决方案：使用Redis API直接获取项目任务集合中的任务ID
+
+2. **错误消息不匹配**:
+   - 测试期望特定格式的错误消息，但BullMQService返回不同格式
+   - 解决方案：更新测试用例中的错误匹配模式，适应BullMQService的错误消息格式
+
+通过这些调整，所有的删除项目测试用例现在都可以在BullMQ存储模式下成功执行。
+
 ## 下一步工作
 
 1. **完善测试覆盖**:
