@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  taskqueue-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taskqueue-mcp
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - MODE=rest
+      - PORT=9593
+      - ENDPOINT=/rest
+      - REDIS_URL=redis://redis:6379
+      - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "9593:9593"
+    depends_on:
+      - redis
+    networks:
+      - mcp-network
+
+  redis:
+    image: redis:alpine
+    container_name: taskqueue-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ../files/redis-data:/data
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local 

@@ -1,0 +1,98 @@
+params:
+  type: object
+  properties:
+    REDIS_URL:
+      type: string
+      description: Redis服务器连接URL，用于BullMQ任务队列
+    MODE:
+      type: string
+      enum: [stdio, rest]
+      default: rest
+      description: 服务器运行模式 (stdio或rest)
+    PORT:
+      type: number
+      default: 9593
+      description: REST模式下的端口号
+    ENDPOINT:
+      type: string
+      default: /rest
+      description: REST模式下的端点路径
+  required:
+    - REDIS_URL
+
+rest:
+  name: taskqueue-mcp
+  port: 9593
+  endpoint: /rest
+
+npx:
+  command: 
+    | REDIS_URL={REDIS_URL} MODE={MODE} PORT={PORT} ENDPOINT={ENDPOINT} npx -y taskqueue-mcp
+  config:
+    | {
+        "mcpServers": {
+          "taskqueue-mcp": {
+            "command": "npx",
+            "args": [
+              "-y",
+              "taskqueue-mcp"
+            ],
+            "env": {
+              "REDIS_URL": "redis://localhost:6379",
+              "MODE": "rest",
+              "PORT": "9593",
+              "ENDPOINT": "/rest"
+            }
+          }
+        }
+      }
+
+docker:
+  command:
+    | docker run -i --rm -e REDIS_URL={REDIS_URL} -e MODE={MODE} -e PORT={PORT} -e ENDPOINT={ENDPOINT} -p {PORT}:{PORT} mcp/taskqueue-mcp
+  config:
+    | {
+        "mcpServers": {
+          "taskqueue-mcp": {
+            "command": "docker",
+            "args": [
+              "run",
+              "-i",
+              "--rm",
+              "-e",
+              "REDIS_URL",
+              "-e",
+              "MODE",
+              "-e",
+              "PORT",
+              "-e",
+              "ENDPOINT",
+              "-p",
+              "9593:9593",
+              "mcp/taskqueue-mcp"
+            ],
+            "env": {
+              "REDIS_URL": "redis://localhost:6379",
+              "MODE": "rest",
+              "PORT": "9593",
+              "ENDPOINT": "/rest"
+            }
+          }
+        }
+      }
+
+compose:
+  command:
+    | docker-compose up taskqueue-mcp
+  config:
+    | {
+        "mcpServers": {
+          "taskqueue-mcp": {
+            "command": "docker-compose",
+            "args": [
+              "up",
+              "taskqueue-mcp"
+            ]
+          }
+        }
+      } 
