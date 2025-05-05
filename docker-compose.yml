@@ -9,13 +9,13 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - MODE=${MODE:rest}
-      - PORT=${PORT:9593}
-      - ENDPOINT=${ENDPOINT:/rest}
-      - REDIS_HOST=${REDIS_HOST:redis}
-      - REDIS_PORT=${REDIS_PORT:6379}
+      - MODE=${MODE:-rest}
+      - PORT=${PORT:-9593}
+      - ENDPOINT=${ENDPOINT:-/rest}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - REDIS_DB=${REDIS_DB:0}
+      - REDIS_DB=${REDIS_DB:-0}
       - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     expose:
