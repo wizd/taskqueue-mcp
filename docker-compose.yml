@@ -25,7 +25,7 @@ services:
     depends_on:
       - redis
     networks:
-      - mcp-network
+      - dokploy-network
 
   redis:
     image: redis:alpine
@@ -35,11 +35,11 @@ services:
     volumes:
       - ../files/redis-data:/data
     networks:
-      - mcp-network
+      - dokploy-network
 
 networks:
-  mcp-network:
-    driver: bridge
+  dokploy-network:
+    external: true
 
 volumes:
   redis-data:
