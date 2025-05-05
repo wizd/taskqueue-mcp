@@ -1,6 +1,5 @@
 import { RedisOptions } from 'ioredis';
 import { Job, Queue, Worker, QueueEvents, WorkerOptions, QueueOptions } from 'bullmq';
-import { Project, Task } from './data.js';
 
 /**
  * BullMQ任务队列存储模式的配置选项
