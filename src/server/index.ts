@@ -92,6 +92,7 @@ async function runServer() {
   try {
     // 根据模式选择传输方式
     if (mode === "rest") {
+      console.log("Using REST transport with API key:", apiKey);
       const transport = new RestServerTransport({
         port,
         endpoint,
