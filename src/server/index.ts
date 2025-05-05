@@ -96,7 +96,7 @@ async function runServer() {
         port,
         endpoint,
         supportTenantId: true,  // 启用多租户支持
-        apiKey: apiKey,  // 启用认证支持
+        bearerToken: apiKey,  // 启用认证支持
       });
       await server.connect(transport);
       
