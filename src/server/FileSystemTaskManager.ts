@@ -21,6 +21,7 @@ import { AppError, AppErrorCode } from "../types/errors.js";
 import { FileSystemService } from "./FileSystemService.js";
 import { generateObject, jsonSchema } from "ai";
 import { TaskManagerBase } from "./TaskManagerBase.js";
+import { MigrationMode } from "../types/bullmq.js";
 
 // Default path follows platform-specific conventions
 const DEFAULT_PATH = path.join(FileSystemService.getAppDataDir(), "tasks.json");
@@ -49,32 +50,38 @@ export class FileSystemTaskManager extends TaskManagerBase {
 
   /**
    * 创建FileSystemTaskManager实例
-   * @param testFilePath 测试文件路径（可选）
+   * @param filePath 任务文件路径
    */
-  constructor(testFilePath?: string) {
+  constructor(filePath?: string) {
     super();
-    this.fileSystemService = new FileSystemService(testFilePath || TASK_FILE_PATH);
-    this.initialized = this.loadTasks().catch(error => {
-      console.error('Failed to initialize TaskManager:', error);
-      // Set default values for failed initialization
-      this.data = { projects: [] };
-      this.projectCounter = 0;
-      this.taskCounter = 0;
-    });
+    this.fileSystemService = new FileSystemService(filePath || TASK_FILE_PATH);
+    
+    // 检查当前存储模式，如果是仅BullMQ模式，则不需要加载文件
+    const storageMode = process.env.TASKQUEUE_STORAGE_MODE;
+    if (storageMode && (['bullmq_only', 'bullmq'] as string[]).includes(storageMode.toLowerCase())) {
+      // 在BullMQ模式下不需要初始化文件
+      this.initialized = Promise.resolve();
+    } else {
+      // 正常初始化
+      this.initialized = this.loadTasks();
+    }
   }
 
   /**
    * 加载任务
    */
-  private async loadTasks() {
+  private async loadTasks(): Promise<void> {
     try {
       const { data, maxProjectId, maxTaskId } = await this.fileSystemService.loadAndInitializeTasks();
       this.data = data;
       this.projectCounter = maxProjectId;
       this.taskCounter = maxTaskId;
     } catch (error) {
-      // Propagate the error to be handled by the constructor
-      throw new AppError('Failed to load tasks from disk', AppErrorCode.FileReadError, error);
+      throw new AppError(
+        "Failed to load tasks from disk",
+        AppErrorCode.FileReadError,
+        error
+      );
     }
   }
 

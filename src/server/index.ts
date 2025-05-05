@@ -5,6 +5,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { TaskManagerFactory } from "./TaskManagerFactory.js";
 import { ALL_TOOLS, executeToolAndHandleErrors } from "./tools.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { MigrationMode } from "../types/bullmq.js";
+import dotenv from 'dotenv';
+
+// 加载环境变量
+dotenv.config();
 
 // Create server with capabilities BEFORE setting up handlers
 const server = new Server(
@@ -22,8 +27,8 @@ const server = new Server(
   }
 );
 
-// Create task manager instance
-const taskManager = TaskManagerFactory.createTaskManager();
+// 显式设置使用BullMQ模式
+const taskManager = TaskManagerFactory.createTaskManager(MigrationMode.BULLMQ_ONLY);
 
 // Set up request handlers AFTER capabilities are configured
 server.setRequestHandler(ListToolsRequestSchema, async () => {
