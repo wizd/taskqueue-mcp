@@ -1,80 +1,81 @@
-import { TaskManagerBase } from './TaskManagerBase.js';
 import { FileSystemTaskManager } from './FileSystemTaskManager.js';
 import { BullMQTaskManager } from './BullMQTaskManager.js';
-import { MigrationMode, BullMQServiceOptions } from '../types/bullmq.js';
+import { TaskManagerBase } from './TaskManagerBase.js';
+import { MigrationMode } from '../types/bullmq.js';
+import dotenv from 'dotenv';
+
+// 加载环境变量
+dotenv.config();
 
 /**
- * 任务管理器工厂类
- * 用于创建适当的任务管理器实例
+ * TaskManager工厂类
+ * 负责创建和配置TaskManager实例
  */
 export class TaskManagerFactory {
-  /**
-   * 创建任务管理器实例
-   * @param mode 存储模式
-   * @param options 配置选项
-   * @returns 任务管理器实例
-   */
-  public static createTaskManager(
-    mode?: MigrationMode, 
-    options?: {
-      filePath?: string;
-      bullmqOptions?: BullMQServiceOptions;
-    }
-  ): TaskManagerBase {
-    // 如果未指定模式，从环境变量获取
-    const storageMode = mode || this.getStorageModeFromEnv();
-    
-    switch (storageMode) {
-      case MigrationMode.FILE_ONLY:
-        return new FileSystemTaskManager(options?.filePath);
-      
-      case MigrationMode.BULLMQ_ONLY:
-        return new BullMQTaskManager(options?.bullmqOptions);
-      
-      case MigrationMode.DUAL_WRITE:
-      case MigrationMode.READ_BULLMQ_WRITE_BOTH:
-        // 在这些模式下，我们需要实现混合写入/读取的管理器
-        // 这部分可以在后续阶段实现，目前只是预留
-        console.warn(`存储模式 ${storageMode} 尚未完全实现，暂时使用BullMQ模式`);
-        return new BullMQTaskManager(options?.bullmqOptions);
-      
-      default:
-        // 默认使用文件系统存储
-        return new FileSystemTaskManager(options?.filePath);
-    }
-  }
+  // 单例TaskManager实例
+  private static instance: TaskManagerBase;
 
   /**
-   * 从环境变量获取存储模式
-   * @returns 解析的存储模式
+   * 获取或创建TaskManager实例
+   * @param mode 迁移模式
+   * @returns TaskManager实例
    */
-  private static getStorageModeFromEnv(): MigrationMode {
-    const modeStr = process.env.TASKQUEUE_STORAGE_MODE;
+  public static createTaskManager(mode?: MigrationMode): TaskManagerBase {
+    // 如果没有指定模式，从环境变量获取
+    if (!mode) {
+      const envMode = process.env.MIGRATION_MODE;
+      if (envMode && Object.values(MigrationMode).includes(envMode as MigrationMode)) {
+        mode = envMode as MigrationMode;
+      } else {
+        mode = MigrationMode.FILE_ONLY; // 默认模式
+      }
+    }
+
+    if (!this.instance) {
+      switch (mode) {
+        case MigrationMode.BULLMQ_ONLY:
+          this.instance = new BullMQTaskManager({
+            connection: {
+              host: process.env.REDIS_HOST || 'localhost',
+              port: parseInt(process.env.REDIS_PORT || '6379', 10),
+              password: process.env.REDIS_PASSWORD
+            },
+            defaultJobOptions: {
+              attempts: 3,
+              removeOnComplete: true
+            }
+          });
+          break;
+        case MigrationMode.DUAL_WRITE:
+        case MigrationMode.READ_BULLMQ_WRITE_BOTH:
+          // 这里应该创建一个DualWriteTaskManager，但目前暂未实现
+          // 回退到文件系统模式
+          this.instance = new FileSystemTaskManager();
+          break;
+        case MigrationMode.FILE_ONLY:
+        default:
+          this.instance = new FileSystemTaskManager();
+          break;
+      }
+    }
+
+    return this.instance;
+  }
+  
+  /**
+   * 获取TaskManager实例，并设置租户ID
+   * @param mode 迁移模式
+   * @param tenantId 租户ID
+   * @returns TaskManager实例
+   */
+  public static createTaskManagerWithTenant(mode?: MigrationMode, tenantId?: string): TaskManagerBase {
+    const taskManager = this.createTaskManager(mode);
     
-    if (!modeStr) {
-      return MigrationMode.FILE_ONLY; // 默认模式
+    // 如果是BullMQTaskManager并且指定了租户ID，设置租户ID
+    if (taskManager instanceof BullMQTaskManager && tenantId) {
+      taskManager.setTenantId(tenantId);
     }
     
-    switch (modeStr.toLowerCase()) {
-      case 'file_only':
-      case 'file':
-        return MigrationMode.FILE_ONLY;
-      
-      case 'bullmq_only':
-      case 'bullmq':
-        return MigrationMode.BULLMQ_ONLY;
-      
-      case 'dual_write':
-      case 'dual':
-        return MigrationMode.DUAL_WRITE;
-      
-      case 'read_bullmq_write_both':
-      case 'read_bullmq':
-        return MigrationMode.READ_BULLMQ_WRITE_BOTH;
-      
-      default:
-        console.warn(`未知的存储模式: ${modeStr}，使用默认的文件存储模式`);
-        return MigrationMode.FILE_ONLY;
-    }
+    return taskManager;
   }
 } 

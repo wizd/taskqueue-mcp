@@ -467,6 +467,13 @@ export async function executeToolAndHandleErrors(
   }
 
   try {
+    // 从参数中提取租户ID（如果存在）
+    const tenantId = args._tenantId as string | undefined;
+    
+    // 通过注释以下这行代码，防止租户ID被传递给工具执行器
+    // 这样工具执行器就不会将租户ID作为常规参数处理
+    delete args._tenantId;
+    
     // 2. Execute the tool - Validation errors (protocol) or TaskManager errors (execution) might be thrown
     const resultData = await executor.execute(taskManager, args);
 

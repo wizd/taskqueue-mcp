@@ -1068,4 +1068,30 @@ export class BullMQService {
     
     return result;
   }
+
+  /**
+   * 设置队列前缀，用于多租户隔离
+   * @param prefix 新的队列前缀
+   */
+  public setPrefix(prefix?: string): void {
+    this.options.prefix = prefix;
+    
+    // 关闭并重新创建现有队列，使用新前缀
+    if (this.serviceState === BullMQServiceState.READY) {
+      // 清除队列缓存，这样下一次获取队列时会使用新前缀创建
+      this.queues.clear();
+      
+      // 清除flowProducer并使用新前缀重新创建
+      if (this.flowProducer) {
+        this.flowProducer.close().catch(err => {
+          console.error('关闭FlowProducer时出错:', err);
+        });
+        
+        this.flowProducer = new FlowProducer({
+          connection: this.redisManager.getConnection(),
+          prefix: this.options.prefix
+        });
+      }
+    }
+  }
 } 

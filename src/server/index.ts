@@ -59,6 +59,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`租户 ${tenantId || 'default'} 无权访问工具 ${request.params?.name}`);
   }
   
+  // 创建带有租户ID的任务管理器
+  const tenantTaskManager = tenantId 
+    ? TaskManagerFactory.createTaskManagerWithTenant(MigrationMode.BULLMQ_ONLY, tenantId)
+    : taskManager;
+  
   // Directly call the handler. It either returns a result object (success or isError:true)
   // OR it throws a tagged protocol error.
   return await executeToolAndHandleErrors(
@@ -67,7 +72,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ...request.params?.arguments || {},
       _tenantId: tenantId  // 将租户ID传递给工具执行上下文
     },
-    taskManager
+    tenantTaskManager
   );
   // SDK automatically handles:
   // - Wrapping the returned value (success data or isError:true object) in `result: { ... }`

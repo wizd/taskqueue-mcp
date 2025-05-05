@@ -29,15 +29,38 @@ import { BullMQTaskData, BullMQServiceOptions } from "../types/bullmq.js";
 export class BullMQTaskManager extends TaskManagerBase {
   private bullMQService: BullMQService;
   private initialized: Promise<void>;
+  private tenantId?: string;
 
   /**
    * 创建BullMQTaskManager实例
    * @param options BullMQ服务配置选项
    */
-  constructor(options?: BullMQServiceOptions) {
+  constructor(options: BullMQServiceOptions = {}) {
     super();
     this.bullMQService = new BullMQService(options);
     this.initialized = Promise.resolve();
+  }
+
+  /**
+   * 设置当前租户ID
+   * @param tenantId 租户ID
+   */
+  public setTenantId(tenantId?: string): void {
+    this.tenantId = tenantId;
+    // 更新BullMQService的前缀设置
+    if (tenantId) {
+      this.bullMQService.setPrefix(`tenant:${tenantId}:`);
+    } else {
+      this.bullMQService.setPrefix(undefined);
+    }
+  }
+
+  /**
+   * 获取当前租户ID
+   * @returns 当前租户ID
+   */
+  public getTenantId(): string | undefined {
+    return this.tenantId;
   }
 
   /**
