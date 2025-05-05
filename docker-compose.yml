@@ -17,6 +17,7 @@ services:
       - REDIS_DB=${REDIS_DB:-0}
       - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - API_KEY=${API_KEY}
     expose:
       - 9093
     depends_on:
