@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { RestServerTransport } from "@chatmcp/sdk/server/rest.js";
+import { RestServerTransport } from "@wizdy/typescript-sdk/server/rest.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { TaskManagerFactory } from "./TaskManagerFactory.js";
 import { ALL_TOOLS, executeToolAndHandleErrors } from "./tools.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { getParamValue, getAuthValue } from "@chatmcp/sdk/utils/index.js";
+import { getParamValue, getAuthValue } from "@wizdy/typescript-sdk/utils/index.js";
 import { MigrationMode } from "../types/bullmq.js";
 import dotenv from 'dotenv';
 
