@@ -10,13 +10,6 @@ WORKDIR /app
 # 复制package.json和package-lock.json
 COPY package*.json ./
 
-# 先修改package.json中@chatmcp/sdk依赖为npm包(或从克隆repo)
-# 方法1：替换为npm包
-RUN sed -i 's|"@chatmcp/sdk": "file:../typescript-sdk/",|"@chatmcp/sdk": "^1.0.0",|g' package.json || true
-# 或者方法2：克隆repo（取消注释下面两行并注释掉上面的方法）
-# WORKDIR /
-# RUN git clone https://github.com/path/to/typescript-sdk.git || true
-
 # 回到app目录并安装依赖
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.npm npm install
