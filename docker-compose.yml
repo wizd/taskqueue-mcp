@@ -18,6 +18,8 @@ services:
       - REDIS_DB=${REDIS_DB:0}
       - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    expose:
+      - 9593
     ports:
       - "9593:9593"
     depends_on:
