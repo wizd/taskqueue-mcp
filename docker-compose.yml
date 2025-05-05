@@ -10,7 +10,7 @@ services:
     environment:
       - NODE_ENV=production
       - MODE=${MODE:-rest}
-      - PORT=${PORT:-9593}
+      - PORT=${PORT:-9093}
       - ENDPOINT=${ENDPOINT:-/rest}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -19,9 +19,9 @@ services:
       - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     expose:
-      - 9593
+      - 9093
     ports:
-      - "9593:9593"
+      - "9093:9093"
     depends_on:
       - redis
     networks:
