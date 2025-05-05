@@ -35,6 +35,7 @@ const taskManager = TaskManagerFactory.createTaskManager(MigrationMode.BULLMQ_ON
 const mode = getParamValue("MODE") || "stdio";
 const port = getParamValue("PORT") || 9593;
 const endpoint = getParamValue("ENDPOINT") || "/rest";
+const apiKey = process.env.API_KEY || "your-api-key";
 
 // Set up request handlers AFTER capabilities are configured
 server.setRequestHandler(ListToolsRequestSchema, async (request) => {
@@ -94,7 +95,8 @@ async function runServer() {
       const transport = new RestServerTransport({
         port,
         endpoint,
-        supportTenantId: true  // 启用多租户支持
+        supportTenantId: true,  // 启用多租户支持
+        apiKey: apiKey,  // 启用认证支持
       });
       await server.connect(transport);
       
