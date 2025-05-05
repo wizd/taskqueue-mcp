@@ -95,6 +95,34 @@ export class BullMQService {
   }
 
   /**
+   * 使用重试机制获取 BullMQ Job
+   * @param queue 目标队列
+   * @param jobId 任务 ID
+   * @param retries 重试次数
+   * @param delay 重试间隔 (ms)
+   * @returns Job 对象或 null
+   */
+  private async _getJobWithRetry(queue: Queue, jobId: string, retries = 5, delay = 500): Promise<Job | null> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const job = await queue.getJob(jobId);
+        if (job) {
+          return job;
+        }
+      } catch (error) {
+        // BullMQ 的 getJob 可能会因为 job 不存在或其他内部错误而抛出异常
+        console.warn(`Error fetching job ${jobId} from queue ${queue.name} (attempt ${i + 1}/${retries}):`, error);
+      }
+      if (i < retries - 1) {
+        // console.log(`Job ${jobId} not found in queue ${queue.name}, attempt ${i + 1}/${retries}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    // console.warn(`Job ${jobId} not found in queue ${queue.name} after ${retries} attempts.`);
+    return null; // 明确返回 null，让调用方处理
+  }
+
+  /**
    * 获取项目队列
    * @param projectId 项目ID
    * @returns 项目队列实例
@@ -226,6 +254,19 @@ export class BullMQService {
         // 添加任务ID到项目任务集合
         await redis.sadd(RedisKeys.projectTasks(projectId), taskId);
         
+        // --- 强制增加延迟 --- 
+        await new Promise(resolve => setTimeout(resolve, 100)); // 增加 100ms 延迟
+        // --- 结束延迟 --- 
+
+        // --- 临时调试/确认步骤 ---
+        const memberExists = await redis.sismember(RedisKeys.projectTasks(projectId), taskId);
+        if (!memberExists) {
+            console.error(`!!! CRITICAL: Task ${taskId} was NOT added to Redis set for project ${projectId} immediately after sadd.`);
+            // 可以在这里抛出错误，或者至少记录下来
+            // throw new AppError(`Failed to reliably add task ${taskId} to project set ${projectId}`, AppErrorCode.RedisCommandError);
+        }
+        // --- 结束调试步骤 ---
+
         taskIds.push(taskId);
       }
       
@@ -299,7 +340,7 @@ export class BullMQService {
     
     try {
       const queue = this.getProjectQueue(projectId);
-      const job = await queue.getJob(taskId);
+      const job = await this._getJobWithRetry(queue, taskId);
       
       if (!job) {
         throw new AppError(
@@ -344,7 +385,7 @@ export class BullMQService {
     
     try {
       const queue = this.getProjectQueue(projectId);
-      const job = await queue.getJob(taskId);
+      const job = await this._getJobWithRetry(queue, taskId);
       
       if (!job) {
         throw new AppError(
@@ -396,7 +437,7 @@ export class BullMQService {
     
     try {
       const queue = this.getProjectQueue(projectId);
-      const job = await queue.getJob(taskId);
+      const job = await this._getJobWithRetry(queue, taskId);
       
       if (!job) {
         throw new AppError(
@@ -471,8 +512,19 @@ export class BullMQService {
       const queue = this.getProjectQueue(projectId);
       
       // 检查所有任务是否已完成和审批
-      const jobs = await Promise.all(taskIds.map(id => queue.getJob(id)));
+      const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
       const tasksData = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
+      
+      // 增加一个检查，确保所有任务都成功获取到了
+      if (tasksData.length !== taskIds.length) {
+        const missingIds = taskIds.filter(id => !jobs.some(j => j?.id === id));
+        console.warn(`approveProjectCompletion: Could not retrieve jobs for tasks: ${missingIds.join(', ')} in project ${projectId}`);
+        // 抛出错误可能更合适，因为无法确认所有任务状态
+        throw new AppError(
+          `无法获取项目 ${projectId} 的所有任务状态`,
+          AppErrorCode.TaskNotFound // 或者定义一个更具体的错误码
+        );
+      }
       
       const allDone = tasksData.every(task => task.status === "done");
       if (!allDone) {
@@ -543,8 +595,19 @@ export class BullMQService {
       }
       
       // 获取所有任务的Job
-      const jobs = await Promise.all(taskIds.map(id => queue.getJob(id)));
+      const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
       const tasksData = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
+      
+      // 增加一个检查，确保所有任务都成功获取到了
+      if (tasksData.length !== taskIds.length) {
+         const missingIds = taskIds.filter(id => !jobs.some(j => j?.id === id));
+         console.warn(`getNextTask: Could not retrieve jobs for tasks: ${missingIds.join(', ')} in project ${projectId}`);
+         // 如果找不到所有任务，可能无法确定下一个任务，可以抛错或返回null/错误
+         throw new AppError(
+           `无法获取项目 ${projectId} 的所有任务状态以确定下一个任务`,
+           AppErrorCode.TaskNotFound
+         );
+      }
       
       // 查找下一个未完成或未审批的任务
       const nextTask = tasksData.find(task => !(task.status === "done" && task.approved));
@@ -617,7 +680,7 @@ export class BullMQService {
           }
           
           const queue = this.getProjectQueue(projectData.projectId);
-          const jobs = await Promise.all(taskIds.map(id => queue.getJob(id)));
+          const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
           const tasksData = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
           
           const completedTasks = tasksData.filter(task => task.status === "done").length;
@@ -699,7 +762,7 @@ export class BullMQService {
         // 获取特定项目的所有任务
         const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
         const queue = this.getProjectQueue(projectId);
-        const jobs = await Promise.all(taskIds.map(id => queue.getJob(id)));
+        const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
         allTasks = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
       } else {
         // 获取所有项目
@@ -709,7 +772,7 @@ export class BullMQService {
         for (const project of projects) {
           const taskIds = await redis.smembers(RedisKeys.projectTasks(project.projectId));
           const queue = this.getProjectQueue(project.projectId);
-          const jobs = await Promise.all(taskIds.map(id => queue.getJob(id)));
+          const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
           const projectTasks = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
           allTasks = [...allTasks, ...projectTasks];
         }
@@ -795,13 +858,14 @@ export class BullMQService {
       
       // 获取任务详情
       const queue = this.getProjectQueue(projectId);
-      const job = await queue.getJob(taskId);
+      const job = await this._getJobWithRetry(queue, taskId);
       
       if (!job) {
-        throw new AppError(
-          `任务 ${taskId} 不存在`,
-          AppErrorCode.TaskNotFound
-        );
+        // 即使 sismember 返回 true，getJob 也可能失败（理论上不应该，但增加健壮性）
+         throw new AppError(
+           `任务 ${taskId} 存在于集合但无法获取 Job 对象`,
+           AppErrorCode.TaskNotFound
+         );
       }
       
       const taskData = job.data as BullMQTaskData;
@@ -863,7 +927,7 @@ export class BullMQService {
       // 删除项目中的所有任务
       for (const taskId of taskIds) {
         // 获取任务
-        const job = await queue.getJob(taskId);
+        const job = await this._getJobWithRetry(queue, taskId);
         
         if (job) {
           // 删除任务

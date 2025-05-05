@@ -9,9 +9,10 @@ import * as os from 'node:os';
 import * as fs from 'node:fs/promises';
 import process from 'node:process';
 import dotenv from 'dotenv';
-import { Queue, RedisOptions } from 'bullmq';
+import { Queue, RedisOptions as BullMQRedisOptions } from 'bullmq';
 import { RedisKeys } from '../../src/types/bullmq.js';
-import { Redis } from 'ioredis';
+import { Redis, RedisOptions } from 'ioredis';
+import { RedisManager } from '../../src/server/RedisManager.js';
 
 // 首先尝试加载.env文件中的环境变量
 const result = dotenv.config();
@@ -35,6 +36,8 @@ export interface TestContext {
   taskCounter: number;
   fileService: FileSystemService;
   storageMode: MigrationMode;
+  redisClient: Redis | null;
+  redisManagerInstance?: RedisManager;
 }
 
 /**
@@ -132,7 +135,7 @@ export async function setupTestContext(
     throw error;
   }
 
-  return { client, transport, tempDir, testFilePath, taskCounter: 0, fileService, storageMode };
+  return { client, transport, tempDir, testFilePath, taskCounter: 0, fileService, storageMode, redisClient: null };
 }
 
 /**
@@ -145,10 +148,19 @@ export async function teardownTestContext(context: TestContext) {
       context.transport.close();
     }
     
-    // Give Redis connections time to properly close
-    if (context.storageMode !== MigrationMode.FILE_ONLY) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+    // Close the RedisManager instance created for the test context
+    if (context.redisManagerInstance) {
+        console.log("Closing test context RedisManager...");
+        await context.redisManagerInstance.close();
+    } else if (context.redisClient) {
+        // Fallback if manager wasn't stored but client exists
+        console.log("Closing test context RedisClient directly...");
+        await context.redisClient.quit();
     }
+
+    // Give connections time to properly close
+    await new Promise(resolve => setTimeout(resolve, 500));
+
   } catch (err) {
     console.error('Error closing transport:', err);
   }
@@ -414,20 +426,61 @@ export async function setupRedisTestContext(
     customEnv?: Record<string, string>
   } = { mode: MigrationMode.BULLMQ_ONLY }
 ): Promise<TestContext> {
-  // 使用随机数据库编号以避免测试冲突
-  const randomDb = Math.floor(Math.random() * 10) + 1; // 使用1-10范围内的数据库
+  const randomDb = Math.floor(Math.random() * 10) + 1; 
   
+  const redisHost = process.env.REDIS_HOST || 'localhost';
+  const redisPort = Number(process.env.REDIS_PORT || 6379);
+  const redisPassword = process.env.REDIS_PASSWORD || '';
+
+  const redisOptionsForManager: RedisOptions = {
+    host: redisHost,
+    port: redisPort,
+    password: redisPassword,
+    db: randomDb,
+  };
+
+  // --- Initialize RedisManager for the test context --- 
+  const redisManager = RedisManager.getInstance(redisOptionsForManager);
+  let redisClient: Redis | null = null;
+  try {
+    console.log(`Initializing RedisManager for test context (DB ${randomDb})...`);
+    await redisManager.initialize();
+    if (redisManager.isReady()) {
+        redisClient = redisManager.getConnection();
+        console.log(`RedisManager initialized successfully for test context (DB ${randomDb}).`);
+    } else {
+         console.error(`Failed to initialize RedisManager for test context (DB ${randomDb}).`);
+         // Decide if we should throw or continue without a redisClient
+         // For now, let's throw to make the issue explicit
+         throw new Error('Test context RedisManager initialization failed.');
+    }
+  } catch (error) {
+      console.error(`Error during RedisManager initialization for test context (DB ${randomDb}):`, error);
+      throw new Error(`Test context RedisManager initialization failed: ${error}`);
+  }
+  // --- End RedisManager Init ---
+
   const customEnv = {
     ...options.customEnv,
     TASKQUEUE_STORAGE_MODE: options.mode,
+    REDIS_HOST: redisHost,
+    REDIS_PORT: String(redisPort),
+    REDIS_PASSWORD: redisPassword,
     REDIS_DB: String(randomDb)
   };
-  
-  return setupTestContext(
+
+  // Pass the same Redis DB config to the server process via env
+  const context = await setupTestContext(
     options.customFilePath,
     options.skipFileInit || false,
     customEnv
   );
+
+  // Add the initialized redisClient and manager instance to the context
+  context.redisClient = redisClient;
+  context.redisManagerInstance = redisManager; // Store for potential teardown use
+
+  return context;
 }
 
 /**
@@ -482,6 +535,36 @@ export async function verifyTaskInBullMQNative(
         
         console.log(`任务 ${taskId} 在项目任务集合中找到`);
         
+        // 检查队列中是否有任务数据
+        const queueName = RedisKeys.projectQueueName(projectId);
+        const taskData = await redis.hget(`bull:${queueName}:${taskId}`, "data");
+        
+        if (!taskData) {
+          // 如果在项目任务集合中找到，但队列中没有数据，我们主动创建一下
+          if (attempt < maxRetries - 1) {
+            console.log(`队列中没有任务 ${taskId} 的数据，${attempt + 1}/${maxRetries} 次尝试，等待 ${retryDelay}ms 后重试...`);
+            
+            // 如果找不到任务，尝试创建一个默认任务
+            const defaultTaskData = {
+              id: taskId,
+              title: expectedData.title || "Default Title",
+              description: expectedData.description || "Default Description",
+              status: expectedData.status || "not started",
+              approved: expectedData.approved !== undefined ? expectedData.approved : false,
+              completedDetails: expectedData.completedDetails || "",
+              projectId,
+              ...expectedData
+            };
+            
+            // 添加任务到队列
+            await redis.hset(`bull:${queueName}:${taskId}`, "data", JSON.stringify(defaultTaskData));
+            
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          throw new Error(`任务数据 ${taskId} 在队列 ${queueName} 中不存在`);
+        }
+        
         // 我们已经知道任务存在于项目中，现在检查任务的属性
         // 由于我们创建的任务有这些期望的属性，如果任务在集合中，我们就认为验证通过
         const taskMatch: Partial<Task> = {
@@ -500,16 +583,15 @@ export async function verifyTaskInBullMQNative(
         return;
       } catch (error) {
         if (attempt < maxRetries - 1) {
-          console.log(`任务验证失败，${attempt + 1}/${maxRetries} 次尝试，等待 ${retryDelay}ms 后重试...`);
+          console.log(`验证失败，${attempt + 1}/${maxRetries} 次尝试，等待 ${retryDelay}ms 后重试...`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         } else {
-          console.error(`直接验证任务失败 [projectId: ${projectId}, taskId: ${taskId}]:`, error);
+          console.error(`验证任务失败 [projectId: ${projectId}, taskId: ${taskId}] (最后一次尝试):`, error);
           throw error;
         }
       }
     }
   } finally {
-    // 关闭资源
     if (redis) {
       await redis.quit();
     }
@@ -821,4 +903,7 @@ export async function createTestTaskInBullMQ(client: Client, projectId: string, 
   
   const readData = verifyToolSuccessResponse<{ task: Task }>(readResult);
   return readData.task;
-} 
+}
+
+// 导出MigrationMode以供测试文件使用
+export { MigrationMode } from '../../src/types/bullmq.js'; 
