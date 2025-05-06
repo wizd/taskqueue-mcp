@@ -9,8 +9,10 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { getParamValue, getAuthValue } from "@wizdy/typescript-sdk/utils/index.js";
 import { MigrationMode } from "../types/bullmq.js";
 import dotenv from 'dotenv';
-import { startBullBoard } from './bullBoardMonitor.js'; // 导入 bull board 启动函数
+import { setupBullBoard } from './bullBoardMonitor.js';
 import { RedisNamingValidator } from './RedisNamingValidator.js';
+import express from 'express';
+import { RedisManager } from './RedisManager.js';
 
 // 加载环境变量
 dotenv.config();
@@ -94,6 +96,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 // 启动服务器
 async function runServer() {
   try {
+    // Initialize Redis Manager centrally first and wait for it
+    console.log("Initializing Redis Manager centrally...");
+    const redisManager = RedisManager.getInstance();
+    await redisManager.initialize(); 
+    console.log("Redis Manager initialized successfully.");
+
     // 根据模式选择传输方式
     if (mode === "rest") {
       console.log("Using REST transport with API key:", apiKey);
@@ -105,20 +113,26 @@ async function runServer() {
       });
       await server.connect(transport);
       
-      await transport.startServer();
+      // Ensure transport server starts AFTER Redis is ready
+      await transport.startServer(); 
       
       console.error(
         `Task Manager MCP Server running on REST with port ${port} and endpoint ${endpoint}`
       );
-      return;
+      // No return here, let the function complete
+    } else {
+      // 使用stdio传输方式
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      console.error(
+        "Task Manager MCP Server running on stdio"
+      );
+      // No return here either
     }
-    
-    // 使用stdio传输方式
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error(
-      "Task Manager MCP Server running on stdio"
-    );
+
+    // Log completion after successful setup for either mode
+    console.log("runServer function completed successfully."); 
+
   } catch (error) {
     console.error("启动服务器时发生致命错误:", error);
     process.exit(1);
@@ -127,20 +141,33 @@ async function runServer() {
 
 // 运行服务器
 runServer().then(() => {
+  console.log("runServer finished, proceeding to Bull Board setup...");
   // 在主服务启动后尝试启动 Bull Board UI
   if (process.env.BULL_BOARD_ENABLED === 'true') {
     const bullBoardPort = parseInt(process.env.BULL_BOARD_PORT || '3000');
     const bullBoardBasePath = process.env.BULL_BOARD_BASE_PATH || '/bull-board';
     console.log(`尝试在端口 ${bullBoardPort} 和路径 ${bullBoardBasePath} 启动 Bull Board UI...`);
-    startBullBoard(bullBoardPort, bullBoardBasePath).catch(err => {
-      console.error('启动 Bull Board UI 失败:', err);
-      // 这里可以选择是否因为 Bull Board 启动失败而退出主进程
-      // process.exit(1);
-    });
+    
+    try {
+      // Create a separate Express app for Bull Board
+      const bullBoardApp = express(); 
+      // Setup Bull Board routes on this app
+      setupBullBoard(bullBoardApp, bullBoardBasePath); 
+      // Start the Bull Board server
+      bullBoardApp.listen(bullBoardPort, () => { 
+        console.log(`Bull Board UI 运行在 http://localhost:${bullBoardPort}${bullBoardBasePath}`);
+      }).on('error', (err: Error) => { // Add error listener for the listen call
+        console.error('启动 Bull Board UI 服务器失败:', err);
+        // Optionally exit if Bull Board fails to start
+        // process.exit(1);
+      });
+    } catch (err: any) { // Catch synchronous errors during setup
+      console.error('设置或启动 Bull Board UI 时出错:', err);
+    }
   } else {
     console.log('Bull Board UI 未启用 (设置 BULL_BOARD_ENABLED=true 以启用)');
   }
-}).catch(err => {
+}).catch((err: Error) => { // Add explicit type for err
   // runServer 内部已经处理了错误并可能退出，这里再加一层保险
   console.error("服务器启动过程中发生未捕获的错误:", err);
   process.exit(1);
