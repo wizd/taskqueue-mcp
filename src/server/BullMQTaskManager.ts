@@ -83,6 +83,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * 对于BullMQ实现，此方法不执行任何操作
    */
   public async reloadFromDisk(): Promise<void> {
+    this.ensureTenantPrefixApplied();
     // BullMQ不需要从磁盘重新加载
     return Promise.resolve();
   }
@@ -100,6 +101,7 @@ export class BullMQTaskManager extends TaskManagerBase {
     projectPlan?: string,
     autoApprove?: boolean
   ): Promise<ProjectCreationSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -153,6 +155,7 @@ export class BullMQTaskManager extends TaskManagerBase {
     model: string;
     attachments: string[];
   }): Promise<ProjectCreationSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
 
     // 此部分代码与原始TaskManager中的generateProjectPlan几乎相同，
@@ -295,6 +298,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param projectId 项目ID
    */
   async getNextTask(projectId: string): Promise<any> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     try {
       // 首先检查项目是否存在
@@ -377,6 +381,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param taskId 任务ID
    */
   public async approveTaskCompletion(projectId: string, taskId: string): Promise<ApproveTaskSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -409,6 +414,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param projectId 项目ID
    */
   public async approveProjectCompletion(projectId: string): Promise<ApproveProjectSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -436,6 +442,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param taskId 任务ID
    */
   public async openTaskDetails(projectId: string, taskId: string): Promise<OpenTaskSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -462,6 +469,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param state 项目状态过滤器
    */
   public async listProjects(state?: TaskState): Promise<ListProjectsSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -507,6 +515,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param state 任务状态过滤器
    */
   public async listTasks(projectId?: string, state?: TaskState): Promise<ListTasksSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -537,6 +546,7 @@ export class BullMQTaskManager extends TaskManagerBase {
     projectId: string,
     tasks: { title: string; description: string; toolRecommendations?: string; ruleRecommendations?: string }[]
   ): Promise<AddTasksSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -583,6 +593,7 @@ export class BullMQTaskManager extends TaskManagerBase {
       completedDetails?: string;
     }
   ): Promise<UpdateTaskSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -619,6 +630,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param taskId 任务ID
    */
   public async deleteTask(projectId: string, taskId: string): Promise<DeleteTaskSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -644,6 +656,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param projectId 项目ID
    */
   public async readProject(projectId: string): Promise<ReadProjectSuccessData> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -674,6 +687,7 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param projectId 项目ID 
    */
   public async deleteProject(projectId: string): Promise<{ status: string; message: string }> {
+    this.ensureTenantPrefixApplied();
     await this.ensureInitialized();
     
     try {
@@ -711,5 +725,26 @@ export class BullMQTaskManager extends TaskManagerBase {
       toolRecommendations: taskData.toolRecommendations,
       ruleRecommendations: taskData.ruleRecommendations
     };
+  }
+
+  /**
+   * 确保租户前缀已正确应用到BullMQ服务
+   * 在每个公共方法开始处调用
+   */
+  private ensureTenantPrefixApplied(): void {
+    if (this.tenantId) {
+      const prefix = `tenant:${this.tenantId}:`;
+      // 如果当前前缀不同，才需要重新设置
+      if (this.bullMQService.getCurrentPrefix() !== prefix) {
+        console.log(`应用租户前缀: ${prefix}`);
+        this.bullMQService.setPrefix(prefix);
+      }
+    } else {
+      // 如果没有租户ID但有前缀，清除前缀
+      if (this.bullMQService.getCurrentPrefix()) {
+        console.log('清除租户前缀，使用默认前缀');
+        this.bullMQService.setPrefix(undefined);
+      }
+    }
   }
 } 

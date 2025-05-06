@@ -2,7 +2,7 @@ import { Queue, Worker, QueueEvents, Job, FlowProducer } from 'bullmq';
 import { Redis } from 'ioredis';
 import { AppError, AppErrorCode } from '../types/errors.js';
 import { RedisManager } from './RedisManager.js';
-import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData } from '../types/bullmq.js';
+import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData, createRedisKeys } from '../types/bullmq.js';
 import { Task, Project } from '../types/data.js';
 import { addQueueToBoard, removeQueueFromBoard } from './bullBoardMonitor.js';
 
@@ -66,13 +66,16 @@ export class BullMQService {
   private async loadCounters(): Promise<void> {
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 获取项目计数器，如果不存在则初始化为0
-      const projectCounter = await redis.get(RedisKeys.projectCounter);
+      const projectCounterKey = redisKeys.projectCounter();
+      const projectCounter = await redis.get(projectCounterKey);
       this.projectCounter = projectCounter ? parseInt(projectCounter, 10) : 0;
       
       // 获取任务计数器，如果不存在则初始化为0
-      const taskCounter = await redis.get(RedisKeys.taskCounter);
+      const taskCounterKey = redisKeys.taskCounter();
+      const taskCounter = await redis.get(taskCounterKey);
       this.taskCounter = taskCounter ? parseInt(taskCounter, 10) : 0;
     } catch (error) {
       throw new AppError(
@@ -131,29 +134,57 @@ export class BullMQService {
   public getProjectQueue(projectId: string): Queue {
     this.ensureReady();
     
-    const queueName = RedisKeys.projectQueueName(projectId);
+    const redisKeys = this.getRedisKeys();
+    const queueName = redisKeys.projectQueueName(projectId);
+    
     if (!this.queues.has(queueName)) {
-      const queue = new Queue(queueName, {
-        connection: this.redisManager.getConnection(),
-        prefix: this.options.prefix,
-        ...this.options.projectQueueOptions
-      });
-      this.queues.set(queueName, queue);
-      
-      // 当创建新队列时，自动添加到 Bull Board
       try {
-        // 使用异步调用但不等待结果，以避免阻塞
-        addQueueToBoard(projectId).catch(error => {
-          // 只记录错误但不影响队列创建
-          console.warn(`将队列 ${queueName} 添加到 Bull Board 失败:`, error);
+        console.log(`创建队列: ${queueName} (项目ID: ${projectId})`);
+        
+        // 如果queueName中已经包含了规范化的租户信息，则不需要再使用BullMQ的prefix
+        const queue = new Queue(queueName, {
+          connection: this.redisManager.getConnection(),
+          // 完全禁用任何前缀，因为我们的队列名已经包含了所有必要的命名空间信息
+          prefix: '',
+          ...this.options.projectQueueOptions
         });
+        this.queues.set(queueName, queue);
+        
+        // 当创建新队列时，自动添加到 Bull Board
+        try {
+          // 使用异步调用但不等待结果，以避免阻塞
+          // 传递当前租户前缀以确保Bull Board使用相同的队列名称
+          addQueueToBoard(projectId).catch(error => {
+            // 只记录错误但不影响队列创建
+            console.warn(`将队列 ${queueName} 添加到 Bull Board 失败:`, error);
+          });
+        } catch (error) {
+          // 忽略错误，即使 Bull Board 添加失败也不影响队列正常工作
+          console.warn(`尝试将队列 ${queueName} 添加到 Bull Board 时出错:`, error);
+        }
       } catch (error) {
-        // 忽略错误，即使 Bull Board 添加失败也不影响队列正常工作
-        console.warn(`尝试将队列 ${queueName} 添加到 Bull Board 时出错:`, error);
+        console.error(`创建队列 ${queueName} 时出错:`, error);
+        throw error;
       }
     }
     
     return this.queues.get(queueName)!;
+  }
+
+  /**
+   * 获取当前设置的前缀
+   * @returns 当前前缀
+   */
+  public getCurrentPrefix(): string | undefined {
+    return this.options.prefix;
+  }
+
+  /**
+   * 获取带有当前前缀的RedisKeys
+   * @returns 带有当前前缀的RedisKeys
+   */
+  private getRedisKeys() {
+    return createRedisKeys(this.getCurrentPrefix());
   }
 
   /**
@@ -172,9 +203,11 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
-      // 增加项目计数器
-      this.projectCounter = await redis.incr(RedisKeys.projectCounter);
+      // 增加项目计数器 - 使用带前缀的键
+      const projectCounterKey = redisKeys.projectCounter();
+      this.projectCounter = await redis.incr(projectCounterKey);
       const projectId = `proj-${this.projectCounter}`;
       
       // 创建项目元数据
@@ -187,9 +220,10 @@ export class BullMQService {
         taskCount: 0
       };
       
-      // 存储项目元数据到Redis哈希表
+      // 存储项目元数据到Redis哈希表 - 使用带前缀的键
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
       await redis.hset(
-        RedisKeys.projectMetadata(projectId),
+        projectMetadataKey,
         this.flattenObject(projectData)
       );
       
@@ -220,9 +254,11 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 检查项目是否存在
-      const exists = await redis.exists(RedisKeys.projectMetadata(projectId));
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
+      const exists = await redis.exists(projectMetadataKey);
       if (exists === 0) {
         throw new AppError(
           `项目 ${projectId} 不存在`,
@@ -244,7 +280,8 @@ export class BullMQService {
       
       // 添加每个任务到队列
       for (const taskDef of tasks) {
-        this.taskCounter = await redis.incr(RedisKeys.taskCounter);
+        const taskCounterKey = redisKeys.taskCounter();
+        this.taskCounter = await redis.incr(taskCounterKey);
         const taskId = `task-${this.taskCounter}`;
         
         const taskData: BullMQTaskData = {
@@ -265,14 +302,15 @@ export class BullMQService {
         });
         
         // 添加任务ID到项目任务集合
-        await redis.sadd(RedisKeys.projectTasks(projectId), taskId);
+        const projectTasksKey = redisKeys.projectTasks(projectId);
+        await redis.sadd(projectTasksKey, taskId);
         
         // --- 强制增加延迟 --- 
         await new Promise(resolve => setTimeout(resolve, 100)); // 增加 100ms 延迟
         // --- 结束延迟 --- 
 
         // --- 临时调试/确认步骤 ---
-        const memberExists = await redis.sismember(RedisKeys.projectTasks(projectId), taskId);
+        const memberExists = await redis.sismember(projectTasksKey, taskId);
         if (!memberExists) {
             console.error(`!!! CRITICAL: Task ${taskId} was NOT added to Redis set for project ${projectId} immediately after sadd.`);
             // 可以在这里抛出错误，或者至少记录下来
@@ -285,7 +323,7 @@ export class BullMQService {
       
       // 更新项目任务计数
       await redis.hincrbyfloat(
-        RedisKeys.projectMetadata(projectId),
+        redisKeys.projectMetadata(projectId),
         'taskCount',
         tasks.length
       );
@@ -313,8 +351,10 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
-      const projectData = await redis.hgetall(RedisKeys.projectMetadata(projectId));
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
+      const projectData = await redis.hgetall(projectMetadataKey);
       if (!projectData || Object.keys(projectData).length === 0) {
         throw new AppError(
           `项目 ${projectId} 不存在`,
@@ -923,9 +963,11 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 检查项目是否存在
-      const projectExists = await redis.exists(RedisKeys.projectMetadata(projectId));
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
+      const projectExists = await redis.exists(projectMetadataKey);
       if (projectExists === 0) {
         throw new AppError(
           `项目 ${projectId} 不存在`,
@@ -934,7 +976,8 @@ export class BullMQService {
       }
       
       // 获取项目任务列表
-      const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+      const projectTasksKey = redisKeys.projectTasks(projectId);
+      const taskIds = await redis.smembers(projectTasksKey);
       const queue = this.getProjectQueue(projectId);
       
       // 删除项目中的所有任务
@@ -948,22 +991,24 @@ export class BullMQService {
         }
         
         // 从项目任务集合中移除
-        await redis.srem(RedisKeys.projectTasks(projectId), taskId);
+        await redis.srem(projectTasksKey, taskId);
       }
       
       // 删除项目元数据
-      await redis.del(RedisKeys.projectMetadata(projectId));
+      await redis.del(projectMetadataKey);
       
       // 删除项目任务集合
-      await redis.del(RedisKeys.projectTasks(projectId));
+      await redis.del(projectTasksKey);
       
       // 尝试删除队列
       try {
         await queue.obliterate();
-        this.queues.delete(RedisKeys.projectQueueName(projectId));
+        const queueName = redisKeys.projectQueueName(projectId);
+        this.queues.delete(queueName);
         
         // 从 Bull Board 中移除队列
         try {
+          // 传递租户前缀以确保移除正确的队列
           await removeQueueFromBoard(projectId);
         } catch (error) {
           // 即使从 Bull Board 移除失败，我们仍然继续操作
@@ -997,12 +1042,14 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 获取项目数据
       const projectData = await this.getProjectData(projectId);
       
       // 获取项目的所有任务
-      const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+      const projectTasksKey = redisKeys.projectTasks(projectId);
+      const taskIds = await redis.smembers(projectTasksKey);
       const tasks = await this.listTasks(projectId);
       
       return {
@@ -1095,12 +1142,34 @@ export class BullMQService {
    * @param prefix 新的队列前缀
    */
   public setPrefix(prefix?: string): void {
+    // 如果前缀没有变化，则不做任何操作
+    if (this.options.prefix === prefix) {
+      return;
+    }
+    
+    console.log(`更改前缀: 从 '${this.options.prefix || "无"}' 到 '${prefix || "无"}'`);
+    
+    // 保存旧前缀用于日志记录
+    const oldPrefix = this.options.prefix;
+    
+    // 更新前缀设置
     this.options.prefix = prefix;
     
     // 关闭并重新创建现有队列，使用新前缀
     if (this.serviceState === BullMQServiceState.READY) {
-      // 清除队列缓存，这样下一次获取队列时会使用新前缀创建
+      // 记录当前所有队列的名称
+      const queueNames = Array.from(this.queues.keys());
+      
+      // 关闭所有现有队列
+      const closePromises = [];
+      for (const [name, queue] of this.queues.entries()) {
+        console.log(`关闭队列: ${name}`);
+        closePromises.push(queue.close());
+      }
+      
+      // 清空队列缓存
       this.queues.clear();
+      console.log(`已清空 ${queueNames.length} 个队列缓存`);
       
       // 清除flowProducer并使用新前缀重新创建
       if (this.flowProducer) {
@@ -1110,9 +1179,14 @@ export class BullMQService {
         
         this.flowProducer = new FlowProducer({
           connection: this.redisManager.getConnection(),
-          prefix: this.options.prefix
+          prefix: ''  // 与队列保持一致，使用空前缀
         });
       }
+      
+      // 使用新的前缀读取计数器
+      this.loadCounters().catch(err => {
+        console.error('重新加载计数器失败:', err);
+      });
     }
   }
 } 

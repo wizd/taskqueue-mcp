@@ -112,19 +112,11 @@ async function createAndAddQueueAdapter(
       return queueAdapters.get(projectId) || null;
     }
 
-    // 准备队列选项
+    // 准备队列选项 - 不需要额外的前缀，因为队列名已包含所有必要的信息
     let queueOptions: any = {
       connection: redis,
+      prefix: '' // 始终使用空前缀，避免BullMQ默认添加bull:前缀
     };
-    
-    // 如果是租户格式，从队列名称中提取前缀
-    const tenantPrefix = queueFullName.match(/^tenant:(.*?)::/);
-    if (tenantPrefix && tenantPrefix[1]) {
-      queueOptions.prefix = `tenant:${tenantPrefix[1]}:`;
-    } else if (queueFullName.startsWith('bull:')) {
-      // 使用标准bull前缀
-      queueOptions.prefix = 'bull:';
-    }
 
     // 如果面板尚未初始化，但要求将队列添加到待处理列表
     if ((!serverAdapter || !isInitialized || !bullBoardApi) && skipIfNotInitialized) {
@@ -175,6 +167,11 @@ async function processPendingQueues(redis: any): Promise<number> {
       
       try {
         if (!queueAdapters.has(projectId)) {
+          // 确保队列选项中包含空前缀
+          if (!queueOptions.prefix && queueOptions.prefix !== '') {
+            queueOptions.prefix = '';
+          }
+          
           const queue = new Queue(normalizedQueueName, queueOptions);
           const adapter = new BullMQAdapter(queue);
           
