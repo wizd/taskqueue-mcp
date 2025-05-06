@@ -498,6 +498,8 @@ export class BullMQTaskManager extends TaskManagerBase {
             completedTasks,
             approvedTasks,
             ...(project.tenantId !== undefined && { tenantId: project.tenantId }), // 从 service 返回的 project 中获取 tenantId
+            createdAt: project.createdAt,
+            updatedAt: project.updatedAt,
           };
         })
       );
@@ -679,6 +681,8 @@ export class BullMQTaskManager extends TaskManagerBase {
         autoApprove: projectFromService.autoApprove,
         tasks: projectFromService.tasks,
         ...(projectFromService.tenantId !== undefined && { tenantId: projectFromService.tenantId }),
+        createdAt: projectFromService.createdAt,
+        updatedAt: projectFromService.updatedAt,
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -735,6 +739,8 @@ export class BullMQTaskManager extends TaskManagerBase {
       toolRecommendations: taskData.toolRecommendations,
       ruleRecommendations: taskData.ruleRecommendations,
       ...(taskData.tenantId !== undefined && { tenantId: taskData.tenantId }), // 添加 tenantId
+      createdAt: taskData.createdAt ? new Date(taskData.createdAt).toISOString() : new Date().toISOString(),
+      updatedAt: taskData.updatedAt ? new Date(taskData.updatedAt).toISOString() : new Date().toISOString(),
     };
   }
 

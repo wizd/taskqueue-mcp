@@ -162,6 +162,8 @@ export class FileSystemTaskManager extends TaskManagerBase {
         completedDetails: "",
         toolRecommendations: taskDef.toolRecommendations,
         ruleRecommendations: taskDef.ruleRecommendations,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       });
     }
 
@@ -172,6 +174,8 @@ export class FileSystemTaskManager extends TaskManagerBase {
       tasks: newTasks,
       completed: false,
       autoApprove: autoApprove === false ? false : true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     this.data.projects.push(newProject);
@@ -358,13 +362,17 @@ export class FileSystemTaskManager extends TaskManagerBase {
       throw new AppError(`Project ${projectId} not found`, AppErrorCode.ProjectNotFound);
     }
 
+    if (proj.completed) {
+      throw new AppError('Project is already completed', AppErrorCode.ProjectAlreadyCompleted);
+    }
+
     const task = proj.tasks.find((t) => t.id === taskId);
     if (!task) {
       throw new AppError(`Task ${taskId} not found`, AppErrorCode.TaskNotFound);
     }
 
     if (task.status !== "done") {
-      throw new AppError('Task not done yet', AppErrorCode.TaskNotDone);
+      throw new AppError('Task is not done yet', AppErrorCode.TaskNotDone);
     }
 
     if (task.approved) {
@@ -372,8 +380,12 @@ export class FileSystemTaskManager extends TaskManagerBase {
     }
 
     task.approved = true;
-    await this.saveTasks();
+    
+    // 更新时间戳
+    task.updatedAt = new Date().toISOString();
+    proj.updatedAt = new Date().toISOString();
 
+    await this.saveTasks();
     return {
       projectId: proj.projectId,
       task: {
@@ -414,6 +426,10 @@ export class FileSystemTaskManager extends TaskManagerBase {
     }
 
     proj.completed = true;
+    
+    // 更新项目的更新时间
+    proj.updatedAt = new Date().toISOString();
+    
     await this.saveTasks();
 
     return {
@@ -484,6 +500,8 @@ export class FileSystemTaskManager extends TaskManagerBase {
         totalTasks: p.tasks.length,
         completedTasks: p.tasks.filter((t) => t.status === "done").length,
         approvedTasks: p.tasks.filter((t) => t.approved).length,
+        createdAt: p.createdAt || new Date().toISOString(),
+        updatedAt: p.updatedAt || new Date().toISOString(),
       })),
     };
   }
@@ -557,6 +575,7 @@ export class FileSystemTaskManager extends TaskManagerBase {
     }
 
     const newTasks: Task[] = [];
+    const now = new Date().toISOString();
     for (const taskDef of tasks) {
       this.taskCounter += 1;
       const newTask: Task = {
@@ -568,10 +587,15 @@ export class FileSystemTaskManager extends TaskManagerBase {
         completedDetails: "",
         toolRecommendations: taskDef.toolRecommendations,
         ruleRecommendations: taskDef.ruleRecommendations,
+        createdAt: now,
+        updatedAt: now,
       };
       newTasks.push(newTask);
       proj.tasks.push(newTask);
     }
+    
+    // 更新项目的更新时间
+    proj.updatedAt = now;
 
     await this.saveTasks();
 
@@ -626,6 +650,10 @@ export class FileSystemTaskManager extends TaskManagerBase {
 
     // Apply updates
     Object.assign(task, updates);
+    
+    // 更新时间戳
+    task.updatedAt = new Date().toISOString();
+    proj.updatedAt = new Date().toISOString();
 
     // Generate message if needed
     let message: string | undefined = undefined;
@@ -686,6 +714,16 @@ export class FileSystemTaskManager extends TaskManagerBase {
       throw new AppError(`Project ${projectId} not found`, AppErrorCode.ProjectNotFound);
     }
 
+    // 确保任务有时间戳
+    project.tasks.forEach(task => {
+      if (!task.createdAt) task.createdAt = new Date().toISOString();
+      if (!task.updatedAt) task.updatedAt = new Date().toISOString();
+    });
+    
+    // 确保项目有时间戳
+    if (!project.createdAt) project.createdAt = new Date().toISOString();
+    if (!project.updatedAt) project.updatedAt = new Date().toISOString();
+
     return {
       projectId: project.projectId,
       initialPrompt: project.initialPrompt,
@@ -693,6 +731,8 @@ export class FileSystemTaskManager extends TaskManagerBase {
       completed: project.completed,
       autoApprove: project.autoApprove,
       tasks: project.tasks,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
     };
   }
 

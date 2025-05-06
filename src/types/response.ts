@@ -39,6 +39,9 @@ export interface ProjectCreationSuccessData {
       totalTasks: number;
       completedTasks: number;
       approvedTasks: number;
+      tenantId?: string;
+      createdAt?: string;
+      updatedAt?: string;
     }>;
   }
   
@@ -63,6 +66,9 @@ export interface ProjectCreationSuccessData {
     completed: boolean;
     autoApprove?: boolean;
     tasks: Task[];
+    tenantId?: string;
+    createdAt?: string;
+    updatedAt?: string;
   }
 
   // Add the new interface for update_task success

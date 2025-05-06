@@ -228,6 +228,9 @@ export class BullMQService {
       // 获取租户ID
       const tenantId = this._getTenantIdFromPrefix();
 
+      // 创建当前时间戳
+      const currentTime = Date.now();
+
       // 创建项目元数据
       const projectData: BullMQProjectData = {
         projectId,
@@ -238,6 +241,8 @@ export class BullMQService {
         taskCount: 0,
         // 如果tenantId存在，则添加它
         ...(tenantId !== undefined && { tenantId }),
+        createdAt: currentTime,
+        updatedAt: currentTime,
       };
       
       // 存储项目元数据到Redis哈希表 - 使用带前缀的键
@@ -302,6 +307,9 @@ export class BullMQService {
       // 此处优先使用项目已有的tenantId (如果有)，保证任务的tenantId与项目一致
       // 如果项目没有tenantId (例如旧数据), 则尝试从当前服务前缀获取
       const tenantId = projectData.tenantId || this._getTenantIdFromPrefix();
+      
+      // 创建当前时间戳
+      const currentTime = Date.now();
 
       // 添加每个任务到队列
       for (const taskDef of tasks) {
@@ -321,6 +329,8 @@ export class BullMQService {
           projectId,
           // 如果tenantId存在，则添加它
           ...(tenantId !== undefined && { tenantId }),
+          createdAt: currentTime,
+          updatedAt: currentTime,
         };
         
         // 添加任务到项目队列，将 taskId 作为 jobId
@@ -341,6 +351,13 @@ export class BullMQService {
         redisKeys.projectMetadata(projectId),
         'taskCount',
         tasks.length
+      );
+      
+      // 更新项目的更新时间
+      await redis.hset(
+        redisKeys.projectMetadata(projectId),
+        'updatedAt',
+        currentTime.toString()
       );
       
       return taskIds;
@@ -380,6 +397,10 @@ export class BullMQService {
       // 处理tenantId可能为 "undefined" 字符串的情况或不存在的情况
       const rawTenantId = projectDataFromRedis.tenantId;
       const tenantId = rawTenantId === 'undefined' ? undefined : (rawTenantId || undefined);
+      
+      // 处理时间戳字段，确保有默认值
+      const createdAt = projectDataFromRedis.createdAt ? parseInt(projectDataFromRedis.createdAt, 10) : Date.now();
+      const updatedAt = projectDataFromRedis.updatedAt ? parseInt(projectDataFromRedis.updatedAt, 10) : Date.now();
 
       return {
         projectId,
@@ -389,6 +410,8 @@ export class BullMQService {
         autoApprove: projectDataFromRedis.autoApprove === 'true',
         taskCount: parseInt(projectDataFromRedis.taskCount || '0', 10),
         ...(tenantId !== undefined && { tenantId }),
+        createdAt,
+        updatedAt,
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -422,7 +445,17 @@ export class BullMQService {
         );
       }
       
-      return job.data as BullMQTaskData;
+      const taskData = job.data as BullMQTaskData;
+      
+      // 确保时间戳字段存在
+      if (!taskData.createdAt) {
+        taskData.createdAt = Date.now();
+      }
+      if (!taskData.updatedAt) {
+        taskData.updatedAt = Date.now();
+      }
+      
+      return taskData;
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -500,14 +533,27 @@ export class BullMQService {
         );
       }
       
+      // 创建当前时间戳
+      const currentTime = Date.now();
+      
       // 应用更新
       const updatedData: BullMQTaskData = {
         ...taskData,
-        ...updates
+        ...updates,
+        updatedAt: currentTime
       };
       
       // 通过 BullMQ API 更新任务数据
       await job.updateData(updatedData);
+      
+      // 如果任务状态变为"完成"，也更新项目的更新时间
+      if (updates.status === "done" && taskData.status !== "done") {
+        await redis.hset(
+          redisKeys.projectMetadata(projectId),
+          'updatedAt',
+          currentTime.toString()
+        );
+      }
       
       return updatedData;
     } catch (error) {
@@ -574,10 +620,14 @@ export class BullMQService {
         );
       }
       
+      // 创建当前时间戳
+      const currentTime = Date.now();
+      
       // 更新审批状态
       const updatedData: BullMQTaskData = {
         ...taskData,
-        approved: true
+        approved: true,
+        updatedAt: currentTime
       };
       
       // 尝试获取Job对象更新任务数据
@@ -635,6 +685,13 @@ export class BullMQService {
           );
         }
       }
+      
+      // 更新项目的更新时间
+      await redis.hset(
+        redisKeys.projectMetadata(projectId),
+        'updatedAt',
+        currentTime.toString()
+      );
       
       return updatedData;
     } catch (error) {
@@ -713,11 +770,16 @@ export class BullMQService {
           }
       }
       
+      // 创建当前时间戳
+      const currentTime = Date.now();
+      
       // 更新项目为已完成
       await redis.hset(
         redisKeys.projectMetadata(projectId),
-        'completed',
-        'true'
+        {
+          'completed': 'true',
+          'updatedAt': currentTime.toString()
+        }
       );
       
       return `项目 ${projectId} 已完成并审批`;
@@ -911,6 +973,8 @@ export class BullMQService {
         completed: projectData.completed,
         autoApprove: projectData.autoApprove,
         ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
+        createdAt: projectData.createdAt ? new Date(projectData.createdAt).toISOString() : new Date().toISOString(),
+        updatedAt: projectData.updatedAt ? new Date(projectData.updatedAt).toISOString() : new Date().toISOString(),
       }));
     } catch (error) {
       console.error('Error in listProjects:', error);
@@ -937,7 +1001,17 @@ export class BullMQService {
     
     // 如果成功获取到任务，直接返回其数据
     if (job) {
-      return job.data as BullMQTaskData;
+      const data = job.data as BullMQTaskData;
+      
+      // 确保时间戳字段存在
+      if (!data.createdAt) {
+        data.createdAt = Date.now();
+      }
+      if (!data.updatedAt) {
+        data.updatedAt = Date.now();
+      }
+      
+      return data;
     }
     
     console.log(`_getTaskDataWithFallback: Failed to get job '${taskId}' using BullMQ API, trying direct Redis access...`);
@@ -1002,7 +1076,20 @@ export class BullMQService {
         // 递归获取所有项目的任务
         for (const project of projects) {
           const projectTasks = await this.listTasks(project.projectId); 
-          allTasks = [...allTasks, ...projectTasks.map(t => ({...t, projectId: project.projectId} as BullMQTaskData))];
+          allTasks = [...allTasks, ...projectTasks.map(t => ({
+            id: t.id,
+            title: t.title,
+            description: t.description,
+            status: t.status,
+            approved: t.approved,
+            completedDetails: t.completedDetails,
+            toolRecommendations: t.toolRecommendations,
+            ruleRecommendations: t.ruleRecommendations,
+            projectId: project.projectId,
+            tenantId: t.tenantId,
+            createdAt: t.createdAt ? new Date(t.createdAt).getTime() : Date.now(),
+            updatedAt: t.updatedAt ? new Date(t.updatedAt).getTime() : Date.now()
+          } as BullMQTaskData))];
         }
       }
       
@@ -1033,6 +1120,8 @@ export class BullMQService {
         toolRecommendations: taskData.toolRecommendations,
         ruleRecommendations: taskData.ruleRecommendations,
         ...(taskData.tenantId !== undefined && { tenantId: taskData.tenantId }),
+        createdAt: taskData.createdAt ? new Date(taskData.createdAt).toISOString() : new Date().toISOString(),
+        updatedAt: taskData.updatedAt ? new Date(taskData.updatedAt).toISOString() : new Date().toISOString()
       }));
     } catch (error) {
       if (error instanceof AppError) {
@@ -1253,6 +1342,8 @@ export class BullMQService {
         completed: projectData.completed,
         autoApprove: projectData.autoApprove,
         ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
+        createdAt: projectData.createdAt ? new Date(projectData.createdAt).toISOString() : new Date().toISOString(),
+        updatedAt: projectData.updatedAt ? new Date(projectData.updatedAt).toISOString() : new Date().toISOString()
       };
     } catch (error) {
       if (error instanceof AppError) {

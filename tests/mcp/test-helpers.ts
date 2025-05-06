@@ -326,6 +326,8 @@ export async function createTestProjectInFile(filePath: string, project: Partial
     projectPlan: "",
     completed: false,
     tasks: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     ...project
   };
   
@@ -359,6 +361,8 @@ export async function createTestTaskInFile(filePath: string, projectId: string, 
     completedDetails: "",
     toolRecommendations: "",
     ruleRecommendations: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     ...task
   };
 

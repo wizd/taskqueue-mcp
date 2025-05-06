@@ -9,6 +9,8 @@ export interface Task {
     toolRecommendations?: string;
     ruleRecommendations?: string;
     tenantId?: string;
+    createdAt?: string;
+    updatedAt?: string;
   }
   
   export interface Project {
@@ -19,6 +21,8 @@ export interface Task {
     completed: boolean;
     autoApprove?: boolean;
     tenantId?: string;
+    createdAt?: string;
+    updatedAt?: string;
   }
   
   export interface TaskManagerFile {

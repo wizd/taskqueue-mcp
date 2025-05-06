@@ -126,6 +126,8 @@ export class TaskManager {
         completedDetails: "",
         toolRecommendations: taskDef.toolRecommendations,
         ruleRecommendations: taskDef.ruleRecommendations,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       });
     }
 
@@ -136,6 +138,8 @@ export class TaskManager {
       tasks: newTasks,
       completed: false,
       autoApprove: autoApprove === false ? false : true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     this.data.projects.push(newProject);
@@ -484,6 +488,7 @@ export class TaskManager {
     }
 
     const newTasks: Task[] = [];
+    const now = new Date().toISOString();
     for (const taskDef of tasks) {
       this.taskCounter += 1;
       const newTask: Task = {
@@ -495,10 +500,15 @@ export class TaskManager {
         completedDetails: "",
         toolRecommendations: taskDef.toolRecommendations,
         ruleRecommendations: taskDef.ruleRecommendations,
+        createdAt: now,
+        updatedAt: now,
       };
       newTasks.push(newTask);
       proj.tasks.push(newTask);
     }
+    
+    // 更新项目的更新时间
+    proj.updatedAt = now;
 
     await this.saveTasks();
 
