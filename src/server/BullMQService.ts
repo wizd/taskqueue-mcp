@@ -716,19 +716,33 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
+      const pattern = redisKeys.projectMetadataPattern();
+      console.log(`listProjects: Using pattern: ${pattern}`);
       
       // 获取所有项目ID的键
-      const projectMetadataKeys = await redis.keys(`project:proj-*:metadata`);
+      const projectMetadataKeys = await redis.keys(pattern);
+      console.log(`listProjects: Keys found (${projectMetadataKeys.length}): ${projectMetadataKeys.join(', ')}`);
       
       if (!projectMetadataKeys || projectMetadataKeys.length === 0) {
+        console.log('listProjects: No project metadata keys found.');
         return [];
       }
       
       // 提取项目ID
+      const regex = redisKeys.projectIdFromKeyRegex();
+      console.log(`listProjects: Using regex: ${regex}`);
       const projectIds = projectMetadataKeys.map(key => {
-        const match = key.match(/project:(proj-\d+):metadata/);
+        const match = key.match(regex);
+        console.log(`listProjects: Matching key "${key}" against regex: ${match ? `Success (ID: ${match[1]})` : 'Fail'}`);
         return match ? match[1] : null;
       }).filter(Boolean) as string[];
+      console.log(`listProjects: Extracted Project IDs (${projectIds.length}): ${projectIds.join(', ')}`);
+      
+      if (projectIds.length === 0) {
+          console.warn(`listProjects: Keys found, but no project IDs extracted.`);
+          return [];
+      }
       
       // 获取每个项目的数据
       const projectsData = await Promise.all(
@@ -791,6 +805,7 @@ export class BullMQService {
         autoApprove: projectData.autoApprove
       }));
     } catch (error) {
+      console.error('Error in listProjects:', error);
       if (error instanceof AppError) {
         throw error;
       }
@@ -819,17 +834,22 @@ export class BullMQService {
       let allTasks: BullMQTaskData[] = [];
       
       if (projectId) {
-        // 检查项目是否存在
-        const exists = await redis.exists(RedisKeys.projectMetadata(projectId));
-        if (exists === 0) {
+        // 检查项目是否存在 - 使用 getRedisKeys 获取带前缀的键生成器
+        const currentRedisKeys = this.getRedisKeys();
+        const projectMetadataKey = currentRedisKeys.projectMetadata(projectId);
+        
+        // 使用 type 命令检查键是否存在且类型为 hash，替代 exists
+        const keyType = await redis.type(projectMetadataKey);
+        if (keyType !== 'hash') {
+          console.warn(`Project check failed for key: ${projectMetadataKey}. Expected 'hash', got '${keyType}'.`);
           throw new AppError(
-            `项目 ${projectId} 不存在`,
+            `项目 ${projectId} 不存在或元数据无效`, // 更新错误信息
             AppErrorCode.ProjectNotFound
           );
         }
         
         // 获取特定项目的所有任务
-        const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+        const taskIds = await redis.smembers(currentRedisKeys.projectTasks(projectId));
         const queue = this.getProjectQueue(projectId);
         const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
         allTasks = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
