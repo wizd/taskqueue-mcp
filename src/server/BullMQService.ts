@@ -299,9 +299,10 @@ export class BullMQService {
           projectId
         };
         
-        // 添加任务到项目队列
-        await queue.add(taskId, taskData, {
-          ...this.options.defaultJobOptions
+        // 添加任务到项目队列，将 taskId 作为 jobId
+        await queue.add('task', taskData, { 
+          jobId: taskId, // 使用 taskId 作为 jobId
+          ...this.options.defaultJobOptions 
         });
         
         // 添加任务ID到项目任务集合
@@ -440,12 +441,28 @@ export class BullMQService {
     this.ensureReady();
     
     try {
+      const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
+      
+      // 检查任务是否存在于项目中
+      const projectTasksKey = redisKeys.projectTasks(projectId);
+      const isMember = await redis.sismember(projectTasksKey, taskId);
+      if (!isMember) {
+        throw new AppError(
+          `任务 ${taskId} 不存在于项目 ${projectId} 中`,
+          AppErrorCode.TaskNotFound
+        );
+      }
+      
+      // 获取队列
       const queue = this.getProjectQueue(projectId);
+      
+      // 尝试获取 Job 对象
       const job = await this._getJobWithRetry(queue, taskId);
       
       if (!job) {
         throw new AppError(
-          `任务 ${taskId} 不存在`,
+          `无法获取任务 ${taskId} 的 Job 对象进行更新`,
           AppErrorCode.TaskNotFound
         );
       }
@@ -466,7 +483,7 @@ export class BullMQService {
         ...updates
       };
       
-      // 更新任务数据
+      // 通过 BullMQ API 更新任务数据
       await job.updateData(updatedData);
       
       return updatedData;
@@ -492,17 +509,31 @@ export class BullMQService {
     this.ensureReady();
     
     try {
-      const queue = this.getProjectQueue(projectId);
-      const job = await this._getJobWithRetry(queue, taskId);
+      const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
-      if (!job) {
+      // 首先检查任务是否存在于项目中
+      const projectTasksKey = redisKeys.projectTasks(projectId);
+      const isMember = await redis.sismember(projectTasksKey, taskId);
+      if (!isMember) {
         throw new AppError(
-          `任务 ${taskId} 不存在`,
+          `任务 ${taskId} 不存在于项目 ${projectId} 中`,
           AppErrorCode.TaskNotFound
         );
       }
       
-      const taskData = job.data as BullMQTaskData;
+      // 获取队列
+      const queue = this.getProjectQueue(projectId);
+      
+      // 先尝试通过可靠方法获取任务数据
+      const taskData = await this._getTaskDataWithFallback(queue, taskId);
+      
+      if (!taskData) {
+        throw new AppError(
+          `无法获取任务 ${taskId} 的数据`,
+          AppErrorCode.TaskNotFound
+        );
+      }
       
       // 检查任务状态
       if (taskData.status !== "done") {
@@ -526,8 +557,61 @@ export class BullMQService {
         approved: true
       };
       
-      // 更新任务数据
-      await job.updateData(updatedData);
+      // 尝试获取Job对象更新任务数据
+      const job = await this._getJobWithRetry(queue, taskId);
+      
+      if (job) {
+        // 通过BullMQ API更新任务数据
+        await job.updateData(updatedData);
+      } else {
+        // 如果无法获取Job对象，尝试直接更新Redis数据
+        console.warn(`approveTaskCompletion: BullMQ Job object for task ${taskId} not found, attempting to update Redis data directly.`);
+        
+        try {
+          // 尝试直接找到任务数据的Redis键
+          const queueIdKey = `${queue.name}:id`;
+          const jobIds = await redis.hgetall(queueIdKey);
+          
+          // 查找与taskId匹配的内部ID
+          let internalJobId: string | null = null;
+          for (const [id, value] of Object.entries(jobIds)) {
+            if (value === taskId) {
+              internalJobId = id;
+              break;
+            }
+          }
+          
+          if (!internalJobId) {
+            throw new AppError(
+              `找不到任务 ${taskId} 的内部ID映射`,
+              AppErrorCode.TaskNotFound
+            );
+          }
+          
+          // 构造任务数据的Redis键
+          const jobDataKey = `${queue.name}:${internalJobId}`;
+          const jobData = await redis.hgetall(jobDataKey);
+          
+          if (!jobData || Object.keys(jobData).length === 0) {
+            throw new AppError(
+              `任务 ${taskId} 的Redis数据记录不存在`,
+              AppErrorCode.TaskNotFound
+            );
+          }
+          
+          // 更新任务数据
+          await redis.hset(jobDataKey, 'data', JSON.stringify(updatedData));
+          
+          console.log(`approveTaskCompletion: Successfully updated Redis data directly for task ${taskId}`);
+        } catch (error) {
+          console.error(`approveTaskCompletion: Failed to update Redis data directly for task ${taskId}:`, error);
+          throw new AppError(
+            `无法审批任务 ${taskId}`,
+            AppErrorCode.JobProcessingError,
+            error
+          );
+        }
+      }
       
       return updatedData;
     } catch (error) {
@@ -552,6 +636,7 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 获取项目数据
       const projectData = await this.getProjectData(projectId);
@@ -563,44 +648,51 @@ export class BullMQService {
         );
       }
       
-      // 获取所有任务
-      const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+      // 获取所有任务 ID
+      const taskIds = await redis.smembers(redisKeys.projectTasks(projectId));
       const queue = this.getProjectQueue(projectId);
       
-      // 检查所有任务是否已完成和审批
-      const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
-      const tasksData = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
+      // 获取所有任务的 Job 对象
+      const jobPromises = taskIds.map(id => this._getJobWithRetry(queue, id));
+      const jobs = await Promise.all(jobPromises);
       
-      // 增加一个检查，确保所有任务都成功获取到了
-      if (tasksData.length !== taskIds.length) {
-        const missingIds = taskIds.filter(id => !jobs.some(j => j?.id === id));
-        console.warn(`approveProjectCompletion: Could not retrieve jobs for tasks: ${missingIds.join(', ')} in project ${projectId}`);
-        // 抛出错误可能更合适，因为无法确认所有任务状态
-        throw new AppError(
-          `无法获取项目 ${projectId} 的所有任务状态`,
-          AppErrorCode.TaskNotFound // 或者定义一个更具体的错误码
-        );
+      // 提取任务数据，过滤掉 null
+      const tasksData = jobs.filter(job => job !== null).map(job => job!.data as BullMQTaskData);
+      
+      // 检查是否所有任务都获取成功
+      if (tasksData.length < taskIds.length) {
+          console.warn(`approveProjectCompletion: Retrieved ${tasksData.length} tasks out of ${taskIds.length} task IDs for project ${projectId}. Cannot approve completion without full data.`);
+           throw new AppError(
+             `无法获取项目 ${projectId} 的所有任务状态以进行审批`,
+             AppErrorCode.TaskNotFound
+           );
       }
       
-      const allDone = tasksData.every(task => task.status === "done");
-      if (!allDone) {
-        throw new AppError(
-          '不是所有任务都已完成',
-          AppErrorCode.TasksNotAllDone
-        );
-      }
-      
-      const allApproved = tasksData.every(task => task.approved);
-      if (!allApproved) {
-        throw new AppError(
-          '不是所有已完成的任务都已审批',
-          AppErrorCode.TasksNotAllApproved
-        );
+      // 如果项目没有任务，则可以直接审批
+      if (taskIds.length === 0) {
+          console.log(`approveProjectCompletion: Project ${projectId} has no tasks, approving completion.`);
+      } else {
+          // 检查所有任务是否都已完成和审批
+          const allDone = tasksData.every(task => task.status === "done");
+          if (!allDone) {
+            throw new AppError(
+              '不是所有任务都已完成',
+              AppErrorCode.TasksNotAllDone
+            );
+          }
+          
+          const allApproved = tasksData.every(task => task.approved);
+          if (!allApproved) {
+            throw new AppError(
+              '不是所有已完成的任务都已审批',
+              AppErrorCode.TasksNotAllApproved
+            );
+          }
       }
       
       // 更新项目为已完成
       await redis.hset(
-        RedisKeys.projectMetadata(projectId),
+        redisKeys.projectMetadata(projectId),
         'completed',
         'true'
       );
@@ -639,9 +731,10 @@ export class BullMQService {
       
       const redis = this.redisManager.getConnection();
       const queue = this.getProjectQueue(projectId);
+      const redisKeys = this.getRedisKeys();
       
       // 获取所有任务ID
-      const taskIds = await redis.smembers(RedisKeys.projectTasks(projectId));
+      const taskIds = await redis.smembers(redisKeys.projectTasks(projectId));
       
       if (taskIds.length === 0) {
         throw new AppError(
@@ -650,19 +743,23 @@ export class BullMQService {
         );
       }
       
-      // 获取所有任务的Job
-      const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
-      const tasksData = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
+      // 获取所有任务的 Job 对象
+      const jobPromises = taskIds.map(id => this._getJobWithRetry(queue, id));
+      const jobs = await Promise.all(jobPromises);
       
-      // 增加一个检查，确保所有任务都成功获取到了
-      if (tasksData.length !== taskIds.length) {
-         const missingIds = taskIds.filter(id => !jobs.some(j => j?.id === id));
-         console.warn(`getNextTask: Could not retrieve jobs for tasks: ${missingIds.join(', ')} in project ${projectId}`);
-         // 如果找不到所有任务，可能无法确定下一个任务，可以抛错或返回null/错误
-         throw new AppError(
-           `无法获取项目 ${projectId} 的所有任务状态以确定下一个任务`,
-           AppErrorCode.TaskNotFound
-         );
+      // 提取任务数据，过滤掉 null (获取失败的 Job)
+      const tasksData = jobs.filter(job => job !== null).map(job => job!.data as BullMQTaskData);
+      
+      if (tasksData.length < taskIds.length) {
+          console.warn(`getNextTask: Retrieved ${tasksData.length} tasks out of ${taskIds.length} task IDs for project ${projectId}. Some jobs might not be available yet or failed to retrieve.`);
+      }
+      
+      // 如果完全没有获取到任务数据（所有 getJob 都失败了）
+      if (tasksData.length === 0 && taskIds.length > 0) {
+        throw new AppError(
+          `无法获取项目 ${projectId} 的任何任务数据`,
+          AppErrorCode.TaskNotFound
+        );
       }
       
       // 查找下一个未完成或未审批的任务
@@ -805,6 +902,27 @@ export class BullMQService {
   }
 
   /**
+   * 获取任务数据，先尝试使用BullMQ的getJob方法，失败则尝试直接从Redis读取
+   * @param queue 任务队列
+   * @param taskId 任务ID
+   * @returns 任务数据或null
+   */
+  private async _getTaskDataWithFallback(queue: Queue, taskId: string): Promise<BullMQTaskData | null> {
+    // 首先尝试使用标准BullMQ方法获取任务
+    const job = await this._getJobWithRetry(queue, taskId);
+    
+    // 如果成功获取到任务，直接返回其数据
+    if (job) {
+      return job.data as BullMQTaskData;
+    }
+    
+    console.log(`_getTaskDataWithFallback: Failed to get job '${taskId}' using BullMQ API, trying direct Redis access...`);
+    
+    // 如果标准方法失败，尝试直接从Redis读取
+    return null; // 明确返回 null，让调用方处理
+  }
+
+  /**
    * 列出项目任务
    * @param projectId 项目ID
    * @param state 任务状态过滤器
@@ -821,36 +939,46 @@ export class BullMQService {
       let allTasks: BullMQTaskData[] = [];
       
       if (projectId) {
-        // 检查项目是否存在 - 使用 getRedisKeys 获取带前缀的键生成器
+        // 检查项目是否存在
         const currentRedisKeys = this.getRedisKeys();
         const projectMetadataKey = currentRedisKeys.projectMetadata(projectId);
-        
-        // 使用 type 命令检查键是否存在且类型为 hash，替代 exists
         const keyType = await redis.type(projectMetadataKey);
         if (keyType !== 'hash') {
           console.warn(`Project check failed for key: ${projectMetadataKey}. Expected 'hash', got '${keyType}'.`);
           throw new AppError(
-            `项目 ${projectId} 不存在或元数据无效`, // 更新错误信息
+            `项目 ${projectId} 不存在或元数据无效`,
             AppErrorCode.ProjectNotFound
           );
         }
         
-        // 获取特定项目的所有任务
+        // 获取特定项目的所有任务 ID
         const taskIds = await redis.smembers(currentRedisKeys.projectTasks(projectId));
+        
+        if (!taskIds || taskIds.length === 0) {
+          console.log(`listTasks: No tasks found for project '${projectId}'`);
+          return [];
+        }
+        
         const queue = this.getProjectQueue(projectId);
-        const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
-        allTasks = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
+        
+        // 使用 _getJobWithRetry 获取 Job 对象
+        const jobPromises = taskIds.map(id => this._getJobWithRetry(queue, id));
+        const jobs = await Promise.all(jobPromises);
+        
+        // 提取任务数据，过滤掉 null (获取失败的 Job)
+        allTasks = jobs.filter(job => job !== null).map(job => job!.data as BullMQTaskData);
+        
+        if (allTasks.length < taskIds.length) {
+          console.warn(`listTasks: Retrieved ${allTasks.length} tasks out of ${taskIds.length} task IDs for project '${projectId}'. Some jobs might not be available yet or failed to retrieve.`);
+        }
       } else {
         // 获取所有项目
         const projects = await this.listProjects();
         
-        // 获取所有项目的所有任务
+        // 递归获取所有项目的任务
         for (const project of projects) {
-          const taskIds = await redis.smembers(RedisKeys.projectTasks(project.projectId));
-          const queue = this.getProjectQueue(project.projectId);
-          const jobs = await Promise.all(taskIds.map(id => this._getJobWithRetry(queue, id)));
-          const projectTasks = jobs.map(job => job?.data as BullMQTaskData).filter(Boolean);
-          allTasks = [...allTasks, ...projectTasks];
+          const projectTasks = await this.listTasks(project.projectId); 
+          allTasks = [...allTasks, ...projectTasks.map(t => ({...t, projectId: project.projectId} as BullMQTaskData))];
         }
       }
       
@@ -904,9 +1032,11 @@ export class BullMQService {
     
     try {
       const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
       
       // 检查项目是否存在
-      const projectExists = await redis.exists(RedisKeys.projectMetadata(projectId));
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
+      const projectExists = await redis.exists(projectMetadataKey);
       if (projectExists === 0) {
         throw new AppError(
           `项目 ${projectId} 不存在`,
@@ -924,7 +1054,8 @@ export class BullMQService {
       }
       
       // 检查任务是否存在于项目中
-      const isMember = await redis.sismember(RedisKeys.projectTasks(projectId), taskId);
+      const projectTasksKey = redisKeys.projectTasks(projectId);
+      const isMember = await redis.sismember(projectTasksKey, taskId);
       if (!isMember) {
         throw new AppError(
           `任务 ${taskId} 不存在于项目 ${projectId} 中`,
@@ -932,36 +1063,35 @@ export class BullMQService {
         );
       }
       
-      // 获取任务详情
+      // 获取队列
       const queue = this.getProjectQueue(projectId);
+      
+      // 尝试获取 Job 对象以检查审批状态并删除
       const job = await this._getJobWithRetry(queue, taskId);
       
-      if (!job) {
-        // 即使 sismember 返回 true，getJob 也可能失败（理论上不应该，但增加健壮性）
-         throw new AppError(
-           `任务 ${taskId} 存在于集合但无法获取 Job 对象`,
-           AppErrorCode.TaskNotFound
-         );
+      if (job) {
+        const taskData = job.data as BullMQTaskData;
+        // 检查任务是否已审批
+        if (taskData.approved) {
+          throw new AppError(
+            '无法删除已审批的任务',
+            AppErrorCode.CannotModifyApprovedTask
+          );
+        }
+        // 删除任务
+        await job.remove();
+      } else {
+        // 如果找不到 Job 对象，可能任务已被删除或获取失败，但仍尝试从集合中移除
+        console.warn(`deleteTask: BullMQ Job object for task ${taskId} not found, attempting to remove from project set.`);
       }
       
-      const taskData = job.data as BullMQTaskData;
+      // 从项目任务集合中移除 (无论是否找到 Job 对象)
+      const removedCount = await redis.srem(projectTasksKey, taskId);
       
-      // 检查任务是否已审批
-      if (taskData.approved) {
-        throw new AppError(
-          '无法删除已审批的任务',
-          AppErrorCode.CannotModifyApprovedTask
-        );
+      // 如果从集合中成功移除，则更新计数器
+      if (removedCount > 0) {
+        await redis.hincrby(projectMetadataKey, 'taskCount', -1);
       }
-      
-      // 删除任务
-      await job.remove();
-      
-      // 从项目任务集合中移除
-      await redis.srem(RedisKeys.projectTasks(projectId), taskId);
-      
-      // 更新项目任务计数
-      await redis.hincrby(RedisKeys.projectMetadata(projectId), 'taskCount', -1);
       
       return `已从项目 ${projectId} 中删除任务 ${taskId}`;
     } catch (error) {
@@ -1011,6 +1141,8 @@ export class BullMQService {
         if (job) {
           // 删除任务
           await job.remove();
+        } else {
+          console.warn(`deleteProject: BullMQ job object for task ${taskId} not found, will remove from project set only.`);
         }
         
         // 从项目任务集合中移除
@@ -1025,37 +1157,28 @@ export class BullMQService {
       
       // 尝试删除队列
       try {
-        // Use the correct queue name generated by redisKeys
+        // 使用 redisKeys 生成的正确队列名
         const queueName = redisKeys.projectQueueName(projectId); 
         const queueInstance = this.queues.get(queueName);
 
-        // Close the queue instance before obliterating if it exists
+        // 在清除前关闭队列实例（如果存在）
         if (queueInstance) {
             await queueInstance.close(); 
-            // Call obliterate on the instance
-            await queueInstance.obliterate({ force: true }); // Add force option for thorough cleaning
-            this.queues.delete(queueName); // Remove from map only if obliterated successfully
+            // 调用队列实例的 obliterate 方法
+            await queueInstance.obliterate({ force: true }); // 添加 force 选项以彻底清理
+            this.queues.delete(queueName); // 只有在成功清除后才从映射中移除
         } else {
-            // If queue instance doesn't exist in map, just log a warning
-            console.warn(`Queue instance for ${queueName} not found in map, cannot obliterate via instance. Associated Redis keys might remain.`);
-            // Do not attempt static obliterate as it does not exist
-            /* 
-            await Queue.obliterate({ 
-                queueName: queueName, 
-                connection: this.redisManager.getConnection(),
-                prefix: '' // Ensure prefix matches queue creation
-            });
-            */
-           // Attempt to remove from map anyway, in case it was somehow added without being obliterated
-           if(this.queues.has(queueName)) { 
-             this.queues.delete(queueName);
-           }
+            // 如果队列实例不在映射中，只记录警告
+            console.warn(`deleteProject: Queue instance for ${queueName} not found in map, cannot obliterate via instance. Associated Redis keys might remain.`);
+            // 如果无论如何都添加到了映射中，尝试移除
+            if(this.queues.has(queueName)) { 
+              this.queues.delete(queueName);
+            }
         }
         
-        // 从 Bull Board 中移除队列 (regardless of queue obliteration success)
+        // 从 Bull Board 中移除队列（无论队列清除是否成功）
         try {
           // 传递当前前缀以确保移除正确的队列
-          // Pass the current prefix to removeQueueFromBoard
           await removeQueueFromBoard(projectId, this.getCurrentPrefix()); 
         } catch (error) {
           // 即使从 Bull Board 移除失败，我们仍然继续操作
@@ -1094,9 +1217,7 @@ export class BullMQService {
       // 获取项目数据
       const projectData = await this.getProjectData(projectId);
       
-      // 获取项目的所有任务
-      const projectTasksKey = redisKeys.projectTasks(projectId);
-      const taskIds = await redis.smembers(projectTasksKey);
+      // 获取项目的所有任务 - 使用 listTasks 确保使用相同的任务获取逻辑
       const tasks = await this.listTasks(projectId);
       
       return {
