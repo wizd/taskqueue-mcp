@@ -131,7 +131,6 @@ async function discoverAllQueues(redis: any, skipIfNotInitialized: boolean = fal
   try {
     let addedCount = 0;
     let discoveredCount = 0;
-    const discoveredPrefixes = new Set<string | undefined>(); // Track discovered prefixes to avoid redundant adapter creation attempts
 
     // --- 修正扫描逻辑 ---
     // 1. 扫描带有租户前缀的项目元数据键
@@ -154,15 +153,9 @@ async function discoverAllQueues(redis: any, skipIfNotInitialized: boolean = fal
           if (projectId) {
             // 使用提取的前缀调用 createAndAddQueueAdapter
             // 记录发现的前缀，防止重复添加
-            if (!discoveredPrefixes.has(prefix)) {
-               const adapter = await createAndAddQueueAdapter(projectId, prefix, redis, skipIfNotInitialized);
-               if (adapter) {
-                  addedCount++;
-                  discoveredPrefixes.add(prefix); // 标记此组合已处理
-               }
-            } else {
-              // 如果相同的前缀和项目ID组合已处理，可能不需要再次添加，但记录下来
-              console.log(`Bull Board: Skipping adapter creation for ${projectId} with prefix ${prefix} as it might already be handled.`);
+            const adapter = await createAndAddQueueAdapter(projectId, prefix, redis, skipIfNotInitialized);
+            if (adapter) {
+               addedCount++;
             }
           } else {
              console.warn(`Bull Board: Could not extract projectId from tenant key: ${key}`);
@@ -192,14 +185,9 @@ async function discoverAllQueues(redis: any, skipIfNotInitialized: boolean = fal
 
          if (projectId) {
              // 对于无前缀的键，prefix 为 undefined
-             if (!discoveredPrefixes.has(undefined)) {
-                const adapter = await createAndAddQueueAdapter(projectId, undefined, redis, skipIfNotInitialized);
-                if (adapter) {
-                   addedCount++;
-                   discoveredPrefixes.add(undefined);
-                }
-             } else {
-               console.log(`Bull Board: Skipping adapter creation for ${projectId} (no prefix) as it might already be handled.`);
+             const adapter = await createAndAddQueueAdapter(projectId, undefined, redis, skipIfNotInitialized);
+             if (adapter) {
+                addedCount++;
              }
          } else {
              console.warn(`Bull Board: Could not extract projectId from default key: ${key}`);
