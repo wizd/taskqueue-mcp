@@ -131,36 +131,86 @@ async function discoverAllQueues(redis: any, skipIfNotInitialized: boolean = fal
   try {
     let addedCount = 0;
     let discoveredCount = 0;
+    const discoveredPrefixes = new Set<string | undefined>(); // Track discovered prefixes to avoid redundant adapter creation attempts
 
-    // *** This discovery logic might need refinement for multi-tenancy ***
-    // It currently uses the default RedisKeys which might not have a prefix.
-    // To discover tenant queues, you might need to scan with tenant-specific patterns.
-    console.warn("Bull Board: discoverAllQueues might not find queues created with specific tenant prefixes.");
+    // --- 修正扫描逻辑 ---
+    // 1. 扫描带有租户前缀的项目元数据键
+    const tenantPattern = 'tenant:*:project:proj-*:metadata';
+    const tenantKeys = await redis.keys(tenantPattern);
+    console.log(`Bull Board: Scanning for tenant keys with pattern: ${tenantPattern}`);
 
-    // Example using default prefix (likely won't find tenant queues)
-    const defaultRedisKeys = createRedisKeys(); // No prefix
-    const standardKeys = await redis.keys(defaultRedisKeys.projectMetadataPattern());
-    
-    if (standardKeys && standardKeys.length > 0) {
-      console.log(`Bull Board: Discovered ${standardKeys.length} project metadata keys (using default pattern).`);
-      discoveredCount += standardKeys.length;
+    if (tenantKeys && tenantKeys.length > 0) {
+      console.log(`Bull Board: Discovered ${tenantKeys.length} potential tenant project metadata keys.`);
+      discoveredCount += tenantKeys.length;
 
-      for (const key of standardKeys) {
-        const match = key.match(defaultRedisKeys.projectIdFromKeyRegex());
-        const projectId = match ? match[1] : null;
+      const tenantRegex = /^(tenant:[^:]+:)?project:(proj-\d+):metadata$/;
 
-        if (projectId) {
-          // Add using the default prefix (or lack thereof)
-          const adapter = await createAndAddQueueAdapter(projectId, undefined, redis, skipIfNotInitialized);
-          if (adapter) addedCount++;
+      for (const key of tenantKeys) {
+        const match = key.match(tenantRegex);
+        if (match) {
+          const prefix = match[1] ? match[1] : undefined; // 提取前缀 (e.g., "tenant:deepchat:")
+          const projectId = match[2]; // 提取项目ID (e.g., "proj-4")
+
+          if (projectId) {
+            // 使用提取的前缀调用 createAndAddQueueAdapter
+            // 记录发现的前缀，防止重复添加
+            if (!discoveredPrefixes.has(prefix)) {
+               const adapter = await createAndAddQueueAdapter(projectId, prefix, redis, skipIfNotInitialized);
+               if (adapter) {
+                  addedCount++;
+                  discoveredPrefixes.add(prefix); // 标记此组合已处理
+               }
+            } else {
+              // 如果相同的前缀和项目ID组合已处理，可能不需要再次添加，但记录下来
+              console.log(`Bull Board: Skipping adapter creation for ${projectId} with prefix ${prefix} as it might already be handled.`);
+            }
+          } else {
+             console.warn(`Bull Board: Could not extract projectId from tenant key: ${key}`);
+          }
+        } else {
+           console.warn(`Bull Board: Tenant key ${key} did not match expected pattern ${tenantRegex}`);
         }
       }
+    } else {
+        console.log(`Bull Board: No tenant project metadata keys found with pattern: ${tenantPattern}`);
     }
-    
-    // TODO: Add logic here to scan for tenant-specific queues if needed.
-    // Example: Iterate known tenant prefixes or use a broader SCAN pattern.
 
-    console.log(`Bull Board: Queue discovery finished. Discovered: ${discoveredCount}, Added/Updated: ${addedCount}`);
+    // 2. （可选）保留扫描无前缀的项目元数据键作为后备
+    const defaultPattern = 'project:proj-*:metadata'; // 无前缀模式
+    const defaultKeys = await redis.keys(defaultPattern);
+    console.log(`Bull Board: Scanning for default keys with pattern: ${defaultPattern}`);
+
+    if (defaultKeys && defaultKeys.length > 0) {
+      console.log(`Bull Board: Discovered ${defaultKeys.length} default project metadata keys.`);
+      discoveredCount += defaultKeys.length;
+
+      const defaultRegex = /^project:(proj-\d+):metadata$/;
+
+      for (const key of defaultKeys) {
+         const match = key.match(defaultRegex);
+         const projectId = match ? match[1] : null;
+
+         if (projectId) {
+             // 对于无前缀的键，prefix 为 undefined
+             if (!discoveredPrefixes.has(undefined)) {
+                const adapter = await createAndAddQueueAdapter(projectId, undefined, redis, skipIfNotInitialized);
+                if (adapter) {
+                   addedCount++;
+                   discoveredPrefixes.add(undefined);
+                }
+             } else {
+               console.log(`Bull Board: Skipping adapter creation for ${projectId} (no prefix) as it might already be handled.`);
+             }
+         } else {
+             console.warn(`Bull Board: Could not extract projectId from default key: ${key}`);
+         }
+      }
+    } else {
+        console.log(`Bull Board: No default project metadata keys found with pattern: ${defaultPattern}`);
+    }
+    // --- 修正结束 ---
+
+    console.log(`Bull Board: Queue discovery finished. Total Keys Scanned (approx): ${discoveredCount}, Adapters Added/Updated: ${addedCount}`);
     return addedCount;
   } catch (error) {
     console.error('Bull Board: Error discovering queues:', error);
