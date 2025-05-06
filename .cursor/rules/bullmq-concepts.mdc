@@ -1,0 +1,71 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# BullMQ 核心概念及自动化处理规划
+
+## 概念映射
+
+### Project ↔ Queue
+- 在 `src/server/BullMQService.ts` 中，每个项目通过：
+  ```ts
+  new Queue(normalizedQueueName, { ...this.options.projectQueueOptions, connection, prefix: '' })
+  ```
+  对应一个 Redis 队列实例。
+- 队列名称生成逻辑见 [createRedisKeys](mdc:src/types/bullmq.ts) 中 `projectQueueName` 方法。
+
+### Task ↔ Job
+- 任务以 `queue.add('task', taskData, { jobId: taskId })` 的方式入队，成为 BullMQ 的 Job。
+- Job 数据结构定义在 [BullMQTaskData](mdc:src/types/bullmq.ts)，包含 `id`、`title`、`description`、`status`、`approved`、`createdAt`、`updatedAt` 等字段。
+
+### Worker（工作者）
+- 按照 DeepWiki “Worker” 文档，需要使用：
+  ```ts
+  new Worker(queueName, processorFn, workerOptions);
+  ```
+- 典型功能包括并发控制(`concurrency`)、锁时长(`lockDuration`)、重试策略(`attempts/backoff`)、优雅关机(`close`) 等。
+- 本项目中可通过自定义 `WorkerManager` 动态为每个项目队列创建/关闭 Worker。
+
+## 自动化处理开发计划
+
+1. **WorkerManager 模块** (`src/server/WorkerManager.ts`)
+   - 扫描所有项目元数据键（复用 `bullBoardMonitor.discoverAllQueues` 逻辑），批量初始化 Worker。
+   - 提供 `register(projectId)` 和 `unregister(projectId)` 接口动态增删 Worker 实例。
+   - 实现 `shutdownAll()` 用于应用优雅退出时关闭所有 Worker。
+
+2. **处理函数** `processorFn(job: Job<BullMQTaskData>)`
+   - 从 `job.data` 获取任务信息并执行业务操作（如外部 API 调用、数据转换等）。
+   - 使用 `await job.updateData({ ...job.data, status: 'done', updatedAt: Date.now() })` 标记完成。
+   - 根据条件调用 `bullService.addTasksToProject(projectId, newTasks)` 动态生成子任务。
+
+3. **配置 WorkerOptions** (`src/server/WorkerManager.ts`)
+   ```ts
+   const workerOptions: WorkerOptions = {
+     connection: redisConfig,
+     concurrency: 5,
+     lockDuration: 30000,
+     stalledInterval: 30000,
+     maxStalledCount: 1,
+     drainDelay: 5,
+     autorun: true,
+     skipVersionCheck: false,
+   };
+   ```
+   - 并发、锁时长、停滞检查、重试等参数依据业务需求调整。
+
+4. **动态挂载/卸载**
+   - 服务启动时：`await workerManager.initAll()`。
+   - 创建项目后：在 `createProject` 成功后调用 `workerManager.register(projectId)`。
+   - 删除项目后：在 `deleteProject` 成功后调用 `workerManager.unregister(projectId)`。
+
+5. **日志与监控**
+   - 订阅 `worker.on('completed')`、`on('failed')`、`on('error')` 等事件，记录处理结果。
+   - 可集成 Prometheus、Sentry 等监控告警系统。
+
+6. **优雅关机**
+   - 捕获 `SIGINT/SIGTERM`，调用 `await workerManager.shutdownAll()` 再退出，确保所有正在处理的 Job 正常完成或安全回退。
+
+---
+
+> 该规则将帮助 AI 快速定位并理解项目/任务与 BullMQ 核心概念的映射，以及自动化后台处理的实现思路和步骤。
