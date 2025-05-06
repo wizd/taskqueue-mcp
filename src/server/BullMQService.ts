@@ -4,6 +4,7 @@ import { AppError, AppErrorCode } from '../types/errors.js';
 import { RedisManager } from './RedisManager.js';
 import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData } from '../types/bullmq.js';
 import { Task, Project } from '../types/data.js';
+import { addQueueToBoard } from './bullBoardMonitor.js';
 
 /**
  * BullMQ服务类
@@ -138,6 +139,18 @@ export class BullMQService {
         ...this.options.projectQueueOptions
       });
       this.queues.set(queueName, queue);
+      
+      // 当创建新队列时，自动添加到 Bull Board
+      try {
+        // 使用异步调用但不等待结果，以避免阻塞
+        addQueueToBoard(projectId).catch(error => {
+          // 只记录错误但不影响队列创建
+          console.warn(`将队列 ${queueName} 添加到 Bull Board 失败:`, error);
+        });
+      } catch (error) {
+        // 忽略错误，即使 Bull Board 添加失败也不影响队列正常工作
+        console.warn(`尝试将队列 ${queueName} 添加到 Bull Board 时出错:`, error);
+      }
     }
     
     return this.queues.get(queueName)!;
