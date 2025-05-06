@@ -6,6 +6,7 @@ import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, Bu
 import { Task, Project } from '../types/data.js';
 import { addQueueToBoard, removeQueueFromBoard } from './bullBoardMonitor.js';
 import { RedisNamingValidator } from './RedisNamingValidator.js';
+import { WorkerManager } from './WorkerManager.js';
 
 /**
  * BullMQ服务类
@@ -21,6 +22,7 @@ export class BullMQService {
   private options: BullMQServiceOptions;
   private projectCounter: number = 0;
   private taskCounter: number = 0;
+  private workerManager: WorkerManager;
 
   /**
    * 创建BullMQService实例
@@ -29,6 +31,14 @@ export class BullMQService {
   constructor(options: BullMQServiceOptions = {}) {
     this.options = options;
     this.redisManager = RedisManager.getInstance(options.connection);
+    
+    // 创建WorkerManager实例
+    this.workerManager = new WorkerManager(
+      options.connection,
+      options.workerOptions,
+      options.prefix
+    );
+    
     this.initialize();
   }
 
@@ -48,6 +58,10 @@ export class BullMQService {
 
       // 加载计数器
       await this.loadCounters();
+      
+      // 初始化WorkerManager - 为现有项目创建Worker
+      await this.workerManager.initialize(); // 先初始化WorkerManager
+      await this.workerManager.initAll();    // 然后初始化所有Worker
       
       this.serviceState = BullMQServiceState.READY;
     } catch (error) {
@@ -254,6 +268,17 @@ export class BullMQService {
       
       // 确保创建项目队列
       this.getProjectQueue(projectId);
+      
+      // 为新项目注册Worker，确保WorkerManager已初始化
+      try {
+        if (!this.workerManager.isInitialized()) {
+          await this.workerManager.initialize();
+        }
+        await this.workerManager.register(projectId);
+      } catch (error) {
+        console.warn(`为项目 ${projectId} 注册Worker失败:`, error);
+        // 继续创建项目，但记录警告
+      }
       
       return projectId;
     } catch (error) {
@@ -1242,6 +1267,17 @@ export class BullMQService {
         );
       }
       
+      // 注销项目的Worker
+      try {
+        // 仅当WorkerManager已初始化时才注销Worker
+        if (this.workerManager.isInitialized()) {
+          await this.workerManager.unregister(projectId);
+        }
+      } catch (error) {
+        console.warn(`注销项目 ${projectId} 的Worker失败:`, error);
+        // 继续删除项目，但记录警告
+      }
+      
       // 获取项目任务列表
       const projectTasksKey = redisKeys.projectTasks(projectId);
       const taskIds = await redis.smembers(projectTasksKey);
@@ -1366,6 +1402,11 @@ export class BullMQService {
     }
     
     try {
+      // 关闭所有工作进程
+      if (this.workerManager.isInitialized()) {
+        await this.workerManager.shutdownAll();
+      }
+      
       // 关闭所有队列
       for (const [name, queue] of this.queues.entries()) {
         await queue.close();
@@ -1447,6 +1488,9 @@ export class BullMQService {
     
     // 更新前缀设置
     this.options.prefix = normalizedPrefix;
+    
+    // 更新WorkerManager的前缀设置
+    this.workerManager.setPrefix(normalizedPrefix);
     
     // 关闭并重新创建现有队列，使用新前缀
     if (this.serviceState === BullMQServiceState.READY) {
