@@ -9,6 +9,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { getParamValue, getAuthValue } from "@wizdy/typescript-sdk/utils/index.js";
 import { MigrationMode } from "../types/bullmq.js";
 import dotenv from 'dotenv';
+import { startBullBoard } from './bullBoardMonitor.js'; // 导入 bull board 启动函数
 
 // 加载环境变量
 dotenv.config();
@@ -122,4 +123,22 @@ async function runServer() {
 }
 
 // 运行服务器
-runServer();
+runServer().then(() => {
+  // 在主服务启动后尝试启动 Bull Board UI
+  if (process.env.BULL_BOARD_ENABLED === 'true') {
+    const bullBoardPort = parseInt(process.env.BULL_BOARD_PORT || '3000');
+    const bullBoardBasePath = process.env.BULL_BOARD_BASE_PATH || '/bull-board';
+    console.log(`尝试在端口 ${bullBoardPort} 和路径 ${bullBoardBasePath} 启动 Bull Board UI...`);
+    startBullBoard(bullBoardPort, bullBoardBasePath).catch(err => {
+      console.error('启动 Bull Board UI 失败:', err);
+      // 这里可以选择是否因为 Bull Board 启动失败而退出主进程
+      // process.exit(1);
+    });
+  } else {
+    console.log('Bull Board UI 未启用 (设置 BULL_BOARD_ENABLED=true 以启用)');
+  }
+}).catch(err => {
+  // runServer 内部已经处理了错误并可能退出，这里再加一层保险
+  console.error("服务器启动过程中发生未捕获的错误:", err);
+  process.exit(1);
+});

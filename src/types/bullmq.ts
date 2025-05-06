@@ -66,6 +66,10 @@ export const RedisKeys = {
   projectTasks: (projectId: string) => `project:${projectId}:tasks`,
   /** 获取项目队列名称 */
   projectQueueName: (projectId: string) => `proj_${projectId}`,
+  /** 用于 KEYS/SCAN 的项目元数据键模式 */
+  projectMetadataPattern: () => 'project:proj-*:metadata',
+  /** 从 Redis 键中提取项目 ID 的正则表达式 */
+  projectIdFromKeyRegex: () => /^project:(proj-\d+):metadata$/,
 }
 
 /**

@@ -18,8 +18,12 @@ services:
       - TASKQUEUE_STORAGE_MODE=${TASKQUEUE_STORAGE_MODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - API_KEY=${API_KEY}
+      - BULL_BOARD_ENABLED=${BULL_BOARD_ENABLED:-false}
+      - BULL_BOARD_PORT=${BULL_BOARD_PORT:-3000}
+      - BULL_BOARD_BASE_PATH=${BULL_BOARD_BASE_PATH:-/bull-board}
     expose:
       - 9093
+      - ${BULL_BOARD_PORT:-3000}
     depends_on:
       - redis
     networks:
