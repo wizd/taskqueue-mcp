@@ -1,116 +1,155 @@
 #!/usr/bin/env node
 
 /**
- * Redis键清理脚本
- * 用于清理多租户环境中的错误格式键
+ * Redis键清理工具
+ * 用于清理多租户环境中格式错误的Redis键
+ * 
+ * 使用方法:
+ * node scripts/clean-redis-keys.js --tenant <tenantId> [--dry-run] [--redis-url <url>]
  */
-const { Redis } = require('ioredis');
-const readline = require('readline');
 
-// 创建Redis客户端
-const createRedisClient = (config = {}) => {
-    const defaultConfig = {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379', 10),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || '0', 10),
-    };
+const Redis = require('ioredis');
+const { Command } = require('commander');
 
-    const redisConfig = { ...defaultConfig, ...config };
-    return new Redis(redisConfig);
-};
+const program = new Command();
+program
+    .name('clean-redis-keys')
+    .description('清理多租户环境中格式错误的Redis键')
+    .option('-t, --tenant <tenant>', '要处理的租户ID')
+    .option('-d, --dry-run', '只显示将要删除的键，不实际删除', false)
+    .option('-r, --redis-url <url>', 'Redis连接URL', 'redis://localhost:6379')
+    .option('-p, --pattern <pattern>', '要匹配的键模式', '*')
+    .parse(process.argv);
 
-// 主函数
+const options = program.opts();
+
+if (!options.tenant) {
+    console.error('错误: 必须提供租户ID');
+    program.help();
+    process.exit(1);
+}
+
 async function main() {
-    const redis = createRedisClient();
+    const redis = new Redis(options.redisUrl);
+    console.log(`连接到Redis: ${options.redisUrl}`);
+
+    // 标准化租户ID格式
+    const tenantId = options.tenant;
+    const correctPrefix = `tenant:${tenantId}:`;
 
     try {
-        console.log('连接到Redis...');
+      // 1. 查找前导冒号错误的键
+      const invalidKeysPatterns = [
+          // 前导冒号错误的键
+          `:tenant_${tenantId}_*`,
+          // BullMQ默认前缀的键（应该使用租户前缀）
+          `bull:tenant_${tenantId}_*`,
+          // 其他可能的错误格式...
+      ];
 
-        // 查找所有键
-        console.log('扫描所有键...');
-        const allKeys = await redis.keys('*');
-        console.log(`找到 ${allKeys.length} 个键`);
+      let keysToFix = [];
 
-        if (allKeys.length === 0) {
-            console.log('没有键需要处理');
-            return;
-        }
+      for (const pattern of invalidKeysPatterns) {
+          const keys = await redis.keys(pattern);
+          keysToFix = [...keysToFix, ...keys];
+      }
 
-        // 查找格式错误的键
-        const problematicKeys = [];
+      if (keysToFix.length === 0) {
+          console.log(`✅ 未发现租户 ${tenantId} 的错误格式键`);
+      } else {
+          console.log(`发现 ${keysToFix.length} 个错误格式的键:`);
 
-        // 1. 带有前导冒号的键，如 `:tenant_deepchat_proj_proj-1:meta`
-        const leadingColonKeys = allKeys.filter(key => key.startsWith(':'));
-        problematicKeys.push(...leadingColonKeys);
+        for (const key of keysToFix) {
+            // 分析键并确定正确的格式
+            let correctKey = '';
 
-        // 2. 使用bull:前缀但实际应该使用租户前缀的键
-        const bullKeys = allKeys.filter(key => key.startsWith('bull:') && key.includes('tenant_'));
-        problematicKeys.push(...bullKeys);
+          if (key.startsWith(':tenant_')) {
+              // 移除前导冒号
+              correctKey = key.slice(1);
+              console.log(`错误键: ${key} -> 正确键: ${correctKey}`);
+          } else if (key.startsWith('bull:tenant_')) {
+              // 去除bull:前缀，保留tenant_tenant_id部分
+              correctKey = key.replace('bull:', '');
+              console.log(`错误键: ${key} -> 正确键: ${correctKey}`);
+          }
 
-        // 3. 显示重复的键 (同一项目ID有多种不同前缀格式的键)
-        const projectPattern = /proj-(\d+)/;
-        const projectIdToKeys = {};
+          if (!options.dryRun && correctKey) {
+              try {
+                  // 获取键类型
+                  const keyType = await redis.type(key);
 
-        allKeys.forEach(key => {
-            const match = key.match(projectPattern);
-            if (match && match[1]) {
-                const projectId = match[1];
-                if (!projectIdToKeys[projectId]) {
-                    projectIdToKeys[projectId] = [];
+              // 根据键类型迁移数据
+              switch (keyType) {
+                  case 'string':
+                      // 复制字符串值
+                      const value = await redis.get(key);
+                      await redis.set(correctKey, value);
+                      break;
+                  case 'hash':
+                      // 复制哈希表
+                      const hash = await redis.hgetall(key);
+                      if (Object.keys(hash).length > 0) {
+                          await redis.hmset(correctKey, hash);
+                      }
+                      break;
+                  case 'list':
+                      // 复制列表
+                      const list = await redis.lrange(key, 0, -1);
+                      if (list.length > 0) {
+                          await redis.lpush(correctKey, ...list);
+                      }
+                      break;
+                  case 'set':
+                      // 复制集合
+                      const set = await redis.smembers(key);
+                      if (set.length > 0) {
+                          await redis.sadd(correctKey, ...set);
+                      }
+                      break;
+                  case 'zset':
+                      // 复制有序集合
+                      const zset = await redis.zrange(key, 0, -1, 'WITHSCORES');
+                      if (zset.length > 0) {
+                          const args = [];
+                          for (let i = 0; i < zset.length; i += 2) {
+                              args.push(zset[i + 1]); // score
+                              args.push(zset[i]);   // member
+                          }
+                          await redis.zadd(correctKey, ...args);
                 }
-                projectIdToKeys[projectId].push(key);
+                    break;
+                default:
+                    console.warn(`无法处理类型为 ${keyType} 的键: ${key}`);
+                    continue;
             }
-        });
 
-        const duplicateProjectKeys = Object.entries(projectIdToKeys)
-            .filter(([_, keys]) => keys.length > 1)
-            .flatMap(([_, keys]) => keys);
-
-        // 合并所有问题键到一个集合中去重
-        const uniqueProblematicKeys = [...new Set([...problematicKeys, ...duplicateProjectKeys])];
-
-        if (uniqueProblematicKeys.length === 0) {
-            console.log('未发现格式错误的键，Redis数据正常');
-            return;
+              // 删除旧键
+              await redis.del(key);
+              console.log(`已成功迁移并删除键: ${key}`);
+          } catch (error) {
+              console.error(`处理键 ${key} 时出错:`, error);
+          }
+        }
         }
 
-        console.log(`\n发现 ${uniqueProblematicKeys.length} 个格式错误的键:`);
-        uniqueProblematicKeys.forEach((key, index) => {
-            console.log(`${index + 1}. ${key}`);
-        });
-
-        // 询问用户是否删除这些键
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-
-        const answer = await new Promise(resolve => {
-            rl.question('\n是否删除这些格式错误的键? (yes/no): ', resolve);
-        });
-
-        if (answer.toLowerCase() === 'yes') {
-            console.log('正在删除格式错误的键...');
-
-            // 批量删除键
-            if (uniqueProblematicKeys.length > 0) {
-                const result = await redis.del(...uniqueProblematicKeys);
-                console.log(`成功删除 ${result} 个键`);
-            }
-
-            console.log('清理完成');
+        if (options.dryRun) {
+            console.log('✅ 干运行完成，未执行实际删除');
         } else {
-            console.log('操作已取消，未删除任何键');
-        }
+              console.log('✅ 已完成键修复');
+          }
+      }
 
-        rl.close();
-    } catch (error) {
-        console.error('执行过程中发生错误:', error);
-    } finally {
-        // 关闭Redis连接
-        redis.disconnect();
-    }
+      // 2. 检查键命名一致性（可选）
+      // 查找具有正确租户前缀的键
+      const correctKeys = await redis.keys(`${correctPrefix}*`);
+      console.log(`\n当前租户 ${tenantId} 有 ${correctKeys.length} 个正确格式的键`);
+
+  } catch (error) {
+      console.error('处理Redis键时出错:', error);
+      process.exit(1);
+  } finally {
+      redis.disconnect();
+  }
 }
 
 main().catch(console.error); 

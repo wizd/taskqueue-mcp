@@ -10,9 +10,17 @@ import { getParamValue, getAuthValue } from "@wizdy/typescript-sdk/utils/index.j
 import { MigrationMode } from "../types/bullmq.js";
 import dotenv from 'dotenv';
 import { startBullBoard } from './bullBoardMonitor.js'; // 导入 bull board 启动函数
+import { RedisNamingValidator } from './RedisNamingValidator.js';
 
 // 加载环境变量
 dotenv.config();
+
+// 检查租户是否有权限访问工具
+function hasPermission(tenantId: string | undefined, toolName: string): boolean {
+  // 简单示例：所有租户都能访问所有工具
+  // 实际应用中这里应添加权限检查逻辑
+  return true;
+}
 
 // Create server with capabilities BEFORE setting up handlers
 const server = new Server(
@@ -39,9 +47,10 @@ const endpoint = getParamValue("ENDPOINT") || "/rest";
 const apiKey = process.env.API_KEY || "your-api-key";
 
 // Set up request handlers AFTER capabilities are configured
-server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-  // 获取租户ID
-  const tenantId = request.params?._tenantId as string | undefined;
+server.setRequestHandler(ListToolsRequestSchema, async (request: any) => {
+  // 获取租户ID并使用RedisNamingValidator进行规范化
+  const rawTenantId = request.params?._tenantId as string | undefined;
+  const tenantId = RedisNamingValidator.normalizeTenantId(rawTenantId);
   console.error(`处理来自租户 ${tenantId || 'default'} 的工具列表请求`);
   
   // 这里可以基于租户ID返回不同的工具列表
@@ -51,9 +60,10 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  // 获取租户ID
-  const tenantId = request.params?._tenantId as string | undefined;
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  // 获取租户ID并使用RedisNamingValidator进行规范化
+  const rawTenantId = request.params?._tenantId as string | undefined;
+  const tenantId = RedisNamingValidator.normalizeTenantId(rawTenantId);
   console.error(`处理来自租户 ${tenantId || 'default'} 的工具调用请求: ${request.params?.name}`);
   
   // 检查租户是否有权限访问请求的工具
@@ -80,13 +90,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // - Wrapping the returned value (success data or isError:true object) in `result: { ... }`
   // - Catching re-thrown protocol errors and formatting the top-level `error: { ... }`
 });
-
-// 简单的权限检查函数，未来可以扩展为更复杂的实现
-function hasPermission(tenantId: string | undefined, toolName: string): boolean {
-  // 实现基本权限检查逻辑
-  // 目前允许所有访问，但这里可以实现特定的权限控制
-  return true;
-}
 
 // 启动服务器
 async function runServer() {

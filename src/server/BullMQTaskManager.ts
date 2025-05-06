@@ -21,6 +21,7 @@ import { generateObject, jsonSchema } from "ai";
 import { BullMQService } from "./BullMQService.js";
 import { TaskManagerBase } from "./TaskManagerBase.js";
 import { BullMQTaskData, BullMQServiceOptions } from "../types/bullmq.js";
+import { RedisNamingValidator } from "./RedisNamingValidator.js";
 
 /**
  * BullMQ 任务管理器
@@ -46,12 +47,19 @@ export class BullMQTaskManager extends TaskManagerBase {
    * @param tenantId 租户ID
    */
   public setTenantId(tenantId?: string): void {
-    this.tenantId = tenantId;
+    // 使用RedisNamingValidator规范化租户ID
+    const normalizedTenantId = RedisNamingValidator.normalizeTenantId(tenantId);
+    
+    this.tenantId = normalizedTenantId;
+    
     // 更新BullMQService的前缀设置
-    if (tenantId) {
-      this.bullMQService.setPrefix(`tenant:${tenantId}:`);
+    if (normalizedTenantId) {
+      const prefix = `tenant:${normalizedTenantId}:`;
+      this.bullMQService.setPrefix(prefix);
+      console.log(`已为租户 ${normalizedTenantId} 设置前缀: ${prefix}`);
     } else {
       this.bullMQService.setPrefix(undefined);
+      console.log('已清除租户前缀');
     }
   }
 
@@ -733,10 +741,22 @@ export class BullMQTaskManager extends TaskManagerBase {
    */
   private ensureTenantPrefixApplied(): void {
     if (this.tenantId) {
-      const prefix = `tenant:${this.tenantId}:`;
-      // 如果当前前缀不同，才需要重新设置
-      if (this.bullMQService.getCurrentPrefix() !== prefix) {
-        console.log(`应用租户前缀: ${prefix}`);
+      // 使用RedisNamingValidator规范化租户ID
+      const normalizedTenantId = RedisNamingValidator.normalizeTenantId(this.tenantId);
+      
+      // 如果租户ID需要规范化，更新实例租户ID
+      if (normalizedTenantId !== this.tenantId) {
+        console.warn(`修正租户ID: ${this.tenantId} -> ${normalizedTenantId}`);
+        this.tenantId = normalizedTenantId;
+      }
+      
+      // 使用规范格式创建前缀
+      const prefix = `tenant:${normalizedTenantId}:`;
+      
+      // 检查当前前缀是否需要更新
+      const currentPrefix = this.bullMQService.getCurrentPrefix();
+      if (currentPrefix !== prefix) {
+        console.log(`应用租户前缀: ${prefix} (之前: ${currentPrefix || '无'})`);
         this.bullMQService.setPrefix(prefix);
       }
     } else {

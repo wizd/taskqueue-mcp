@@ -2,9 +2,10 @@ import { Queue, Worker, QueueEvents, Job, FlowProducer } from 'bullmq';
 import { Redis } from 'ioredis';
 import { AppError, AppErrorCode } from '../types/errors.js';
 import { RedisManager } from './RedisManager.js';
-import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData, createRedisKeys } from '../types/bullmq.js';
+import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData, createRedisKeys, normalizeRedisPrefix } from '../types/bullmq.js';
 import { Task, Project } from '../types/data.js';
 import { addQueueToBoard, removeQueueFromBoard } from './bullBoardMonitor.js';
+import { RedisNamingValidator } from './RedisNamingValidator.js';
 
 /**
  * BullMQ服务类
@@ -127,51 +128,6 @@ export class BullMQService {
   }
 
   /**
-   * 获取项目队列
-   * @param projectId 项目ID
-   * @returns 项目队列实例
-   */
-  public getProjectQueue(projectId: string): Queue {
-    this.ensureReady();
-    
-    const redisKeys = this.getRedisKeys();
-    const queueName = redisKeys.projectQueueName(projectId);
-    
-    if (!this.queues.has(queueName)) {
-      try {
-        console.log(`创建队列: ${queueName} (项目ID: ${projectId})`);
-        
-        // 如果queueName中已经包含了规范化的租户信息，则不需要再使用BullMQ的prefix
-        const queue = new Queue(queueName, {
-          connection: this.redisManager.getConnection(),
-          // 完全禁用任何前缀，因为我们的队列名已经包含了所有必要的命名空间信息
-          prefix: '',
-          ...this.options.projectQueueOptions
-        });
-        this.queues.set(queueName, queue);
-        
-        // 当创建新队列时，自动添加到 Bull Board
-        try {
-          // 使用异步调用但不等待结果，以避免阻塞
-          // 传递当前租户前缀以确保Bull Board使用相同的队列名称
-          addQueueToBoard(projectId).catch(error => {
-            // 只记录错误但不影响队列创建
-            console.warn(`将队列 ${queueName} 添加到 Bull Board 失败:`, error);
-          });
-        } catch (error) {
-          // 忽略错误，即使 Bull Board 添加失败也不影响队列正常工作
-          console.warn(`尝试将队列 ${queueName} 添加到 Bull Board 时出错:`, error);
-        }
-      } catch (error) {
-        console.error(`创建队列 ${queueName} 时出错:`, error);
-        throw error;
-      }
-    }
-    
-    return this.queues.get(queueName)!;
-  }
-
-  /**
    * 获取当前设置的前缀
    * @returns 当前前缀
    */
@@ -184,7 +140,67 @@ export class BullMQService {
    * @returns 带有当前前缀的RedisKeys
    */
   private getRedisKeys() {
-    return createRedisKeys(this.getCurrentPrefix());
+    // 使用normalizeRedisPrefix确保前缀格式正确
+    const normalizedPrefix = normalizeRedisPrefix(this.getCurrentPrefix());
+    return createRedisKeys(normalizedPrefix);
+  }
+
+  /**
+   * 获取项目队列
+   * @param projectId 项目ID
+   * @returns 项目队列实例
+   */
+  public getProjectQueue(projectId: string): Queue {
+    this.ensureReady();
+    
+    const redisKeys = this.getRedisKeys();
+    const queueName = redisKeys.projectQueueName(projectId);
+    
+    // 从当前前缀中提取租户ID（如果有）
+    let tenantId: string | undefined = undefined;
+    const prefix = this.getCurrentPrefix();
+    if (prefix) {
+      const tenantMatch = prefix.match(/^tenant:([^:]+):/);
+      if (tenantMatch && tenantMatch[1]) {
+        tenantId = tenantMatch[1];
+      }
+    }
+    
+    // 使用验证器修复队列名
+    const normalizedQueueName = RedisNamingValidator.fixQueueName(queueName, tenantId);
+    
+    if (!this.queues.has(normalizedQueueName)) {
+      try {
+        console.log(`创建队列: ${normalizedQueueName} (项目ID: ${projectId})`);
+        
+        // 使用标准化的队列名创建队列
+        const queue = new Queue(normalizedQueueName, {
+          connection: this.redisManager.getConnection(),
+          // 完全禁用任何前缀，因为我们的队列名已经包含了所有必要的命名空间信息
+          prefix: '',
+          ...this.options.projectQueueOptions
+        });
+        this.queues.set(normalizedQueueName, queue);
+        
+        // 当创建新队列时，自动添加到 Bull Board
+        try {
+          // 使用异步调用但不等待结果，以避免阻塞
+          // 传递当前租户前缀以确保Bull Board使用相同的队列名称
+          addQueueToBoard(projectId, tenantId).catch(error => {
+            // 只记录错误但不影响队列创建
+            console.warn(`将队列 ${normalizedQueueName} 添加到 Bull Board 失败:`, error);
+          });
+        } catch (error) {
+          // 忽略错误，即使 Bull Board 添加失败也不影响队列正常工作
+          console.warn(`尝试将队列 ${normalizedQueueName} 添加到 Bull Board 时出错:`, error);
+        }
+      } catch (error) {
+        console.error(`创建队列 ${normalizedQueueName} 时出错:`, error);
+        throw error;
+      }
+    }
+    
+    return this.queues.get(normalizedQueueName)!;
   }
 
   /**
@@ -1147,13 +1163,21 @@ export class BullMQService {
       return;
     }
     
-    console.log(`更改前缀: 从 '${this.options.prefix || "无"}' 到 '${prefix || "无"}'`);
+    // 规范化前缀格式 - 使用RedisNamingValidator
+    const normalizedPrefix = normalizeRedisPrefix(prefix);
+    
+    // 记录前缀变更
+    if (prefix && normalizedPrefix !== prefix) {
+      console.warn(`规范化前缀: ${prefix} -> ${normalizedPrefix}`);
+    }
+    
+    console.log(`更改前缀: 从 '${this.options.prefix || "无"}' 到 '${normalizedPrefix || "无"}'`);
     
     // 保存旧前缀用于日志记录
     const oldPrefix = this.options.prefix;
     
     // 更新前缀设置
-    this.options.prefix = prefix;
+    this.options.prefix = normalizedPrefix;
     
     // 关闭并重新创建现有队列，使用新前缀
     if (this.serviceState === BullMQServiceState.READY) {

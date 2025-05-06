@@ -7,6 +7,7 @@ import { Queue, QueueEvents } from 'bullmq';
 import { RedisManager } from './RedisManager.js';
 import { RedisKeys } from '../types/bullmq.js';
 import { AppError, AppErrorCode } from '../types/errors.js';
+import { RedisNamingValidator } from './RedisNamingValidator.js';
 
 // 存储已添加到监控面板的队列适配器
 const queueAdapters = new Map<string, BullMQAdapter>();
@@ -34,27 +35,35 @@ let keyspaceNotificationListener: QueueEvents | null = null;
  */
 function extractProjectIdFromQueueName(queueFullName: string): string | null {
   // 1. 检查是否是有租户前缀的队列名
+  // 新格式: tenant_tenantid_proj_projid
+  const tenantNewPattern = /^tenant_([^_]+)_proj_(proj-\d+)/;
+  const tenantNewMatch = queueFullName.match(tenantNewPattern);
+  if (tenantNewMatch && tenantNewMatch[2]) {
+    return tenantNewMatch[2];
+  }
+  
+  // 2. 检查是否是旧的租户前缀队列名 - 带双冒号的
   const tenantPattern = /^tenant:.*?::proj_(proj-\d+)/;
   const tenantMatch = queueFullName.match(tenantPattern);
   if (tenantMatch && tenantMatch[1]) {
     return tenantMatch[1];
   }
   
-  // 2. 检查标准队列名格式
+  // 3. 检查标准队列名格式
   const standardPattern = /^proj_(proj-\d+)/;
   const standardMatch = queueFullName.match(standardPattern);
   if (standardMatch && standardMatch[1]) {
     return standardMatch[1];
   }
   
-  // 3. 如果项目名称不符合预期格式，尝试从 bull: 前缀提取
+  // 4. 如果项目名称不符合预期格式，尝试从 bull: 前缀提取
   const bullPattern = /^bull:proj_(proj-\d+)/;
   const bullMatch = queueFullName.match(bullPattern);
   if (bullMatch && bullMatch[1]) {
     return bullMatch[1];
   }
   
-  // 4. 自定义项目ID格式
+  // 5. 自定义项目ID格式
   // 可以在这里添加其他格式的匹配规则
   
   return null; // 无法提取项目ID
@@ -67,14 +76,21 @@ function extractProjectIdFromQueueName(queueFullName: string): string | null {
  * @returns 标准化的队列名
  */
 function normalizeQueueName(queueFullName: string): string {
-  // 1. 移除租户前缀
+  // 1. 处理新格式的租户前缀 (tenant_tenantid_proj_projid)
+  // 保留原样即可，因为这已经是规范化的格式
+  const tenantNewPattern = /^tenant_([^_]+)_proj_(proj-\d+)/;
+  if (tenantNewPattern.test(queueFullName)) {
+    return queueFullName;
+  }
+  
+  // 2. 移除旧格式的租户前缀 (带双冒号)
   const tenantPattern = /^tenant:.*?::(.*)/;
   const tenantMatch = queueFullName.match(tenantPattern);
   if (tenantMatch && tenantMatch[1]) {
     return tenantMatch[1];
   }
   
-  // 2. 移除bull前缀
+  // 3. 移除bull前缀
   const bullPattern = /^bull:(.*)/;
   const bullMatch = queueFullName.match(bullPattern);
   if (bullMatch && bullMatch[1]) {
@@ -244,9 +260,18 @@ async function discoverAllQueues(redis: any, skipIfNotInitialized: boolean = fal
     
     // 3. 扫描多租户格式的队列
     const tenantPatterns = [
+      // 旧格式 - 带双冒号
       'tenant:*::proj_proj-*:meta',
       'tenant:*::proj_proj-*:wait',
       'tenant:*::proj_proj-*:events',
+      // 新格式 - 带下划线
+      'tenant_*_proj_proj-*:meta',
+      'tenant_*_proj_proj-*:wait',
+      'tenant_*_proj_proj-*:events',
+      // 错误格式 - 前导冒号
+      ':tenant_*_proj_proj-*:meta',
+      ':tenant_*_proj_proj-*:wait',
+      ':tenant_*_proj_proj-*:events'
     ];
     
     for (const pattern of tenantPatterns) {
@@ -326,7 +351,7 @@ async function setupQueueDiscovery(redis: any) {
           const key = channel.split(':').slice(1).join(':');
           
           // 检查是否是元数据键模式
-          if (key.match(/^(project:proj-\d+:metadata|bull:proj_proj-\d+:meta|tenant:.*?::proj_proj-\d+:meta)$/)) {
+          if (key.match(/^(project:proj-\d+:metadata|bull:proj_proj-\d+:meta|tenant:.*?::proj_proj-\d+:meta|tenant_.*?_proj_proj-\d+:meta|:tenant_.*?_proj_proj-\d+:meta)$/)) {
             // 提取队列名
             let queueName = '';
             
@@ -340,8 +365,12 @@ async function setupQueueDiscovery(redis: any) {
               // 从BullMQ键中提取队列名
               queueName = key.replace(':meta', '');
             } else if (key.startsWith('tenant:')) {
-              // 从多租户键中提取队列名
+              // 从旧格式租户键中提取队列名
               queueName = key.replace(':meta', '');
+            } else if (key.startsWith('tenant_') || key.startsWith(':tenant_')) {
+              // 从新格式租户键中提取队列名
+              // 去除前导冒号(如果有)
+              queueName = key.replace(/^:/, '').replace(':meta', '');
             }
             
             if (queueName) {
@@ -437,7 +466,7 @@ export async function startBullBoard(port = 3000, basePath = '/bull-board') {
  * 当队列不是通过标准方式创建时可以调用此函数
  * @param projectId 项目ID
  */
-export async function addQueueToBoard(projectId: string): Promise<void> {
+export async function addQueueToBoard(projectId: string, tenantId?: string): Promise<void> {
   if (!isInitialized || !serverAdapter || !bullBoardApi) {
     throw new AppError(
       'Bull Board UI 尚未初始化，无法添加队列',
@@ -449,11 +478,12 @@ export async function addQueueToBoard(projectId: string): Promise<void> {
     const redisManager = RedisManager.getInstance();
     const redis = redisManager.getConnection();
     
-    // 构造标准队列名
-    const queueName = RedisKeys.projectQueueName(projectId);
+    // 使用 tenantId 和 projectId 创建正确的队列名
+    const queueName = RedisNamingValidator.createQueueName(tenantId, projectId);
+    
     await createAndAddQueueAdapter(queueName, redis);
   } catch (error) {
-    console.error(`Bull Board: 手动添加队列 ${projectId} 时出错:`, error);
+    console.error(`Bull Board: 手动添加队列 ${projectId} (租户: ${tenantId || '无'}) 时出错:`, error);
     throw new AppError(
       `无法添加队列 ${projectId} 到监控面板`,
       AppErrorCode.Unknown,

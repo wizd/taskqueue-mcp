@@ -467,11 +467,15 @@ export async function executeToolAndHandleErrors(
   }
 
   try {
-    // 从参数中提取租户ID（如果存在）
+    // 从参数中提取租户ID（如果存在）并进行处理
     const tenantId = args._tenantId as string | undefined;
     
-    // 通过注释以下这行代码，防止租户ID被传递给工具执行器
-    // 这样工具执行器就不会将租户ID作为常规参数处理
+    // 如果租户ID包含前导冒号，记录警告并修正
+    if (tenantId && typeof tenantId === 'string' && tenantId.startsWith(':')) {
+      console.warn(`检测到错误的租户ID格式: ${tenantId}，自动修正`);
+    }
+    
+    // 从参数中移除租户ID，防止它被传递给工具执行器
     delete args._tenantId;
     
     // 2. Execute the tool - Validation errors (protocol) or TaskManager errors (execution) might be thrown

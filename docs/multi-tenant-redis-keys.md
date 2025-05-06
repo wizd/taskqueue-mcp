@@ -1,60 +1,88 @@
 # 多租户环境中Redis键命名规范
 
-## 问题背景
+## 命名约定
 
-在多租户环境中，发现Redis键命名存在混乱，主要表现在以下几个方面：
+在多租户环境中，所有Redis键应遵循以下统一的命名格式:
 
-1. 有些键使用了正确的租户前缀格式：`tenant:tenantid:project:proj-1:metadata`
-2. 某些键使用了BullMQ默认的前缀：`bull:proj_proj-1:meta`
-3. 还有一些键出现了错误的冒号格式：`:tenant_tenantid_proj_proj-1:meta`
+### 项目元数据
 
-这种不一致性导致了数据访问错误、监控困难和维护挑战。
+```
+tenant:tenantid:project:proj-1:metadata
+```
+
+### BullMQ队列
+
+由于BullMQ不支持在键名中使用冒号，队列名需要使用下划线替代:
+
+```
+tenant_tenantid_proj_proj-1
+```
+
+### 计数器等其他键
+
+```
+tenant:tenantid:taskqueue:counters:projects
+```
+
+这样既能保持Redis键的可读性，又能满足BullMQ对队列名的要求。 
 
 ## 根本原因分析
 
-1. **BullMQ队列命名问题**：BullMQ默认使用`bull:`前缀，但在多租户环境中需要自定义前缀
-2. **冒号处理不一致**：BullMQ队列名不能包含冒号，需要特殊处理
-3. **Bull Board监控集成问题**：Bull Board集成时使用的队列名前缀不一致
+通过彻底分析，我们发现键命名不一致的根本原因有以下几点：
 
-## 解决方案
+1. **多处租户ID规范化逻辑缺失**：在设置和处理租户ID时，没有统一的规范化处理，导致格式错误的租户ID（如带前导冒号）直接用于生成键名
 
-### 1. 规范化Redis键命名
+2. **前缀处理不一致**：BullMQService的setPrefix方法没有对前缀做规范化处理，导致错误的前缀格式（如`:tenant:deepchat:`）被保留并传递给队列创建
 
-- **项目元数据哈希表**：`tenant:tenantid:project:proj-N:metadata`
-- **项目计数器**：`tenant:tenantid:taskqueue:counters:projects`
-- **任务计数器**：`tenant:tenantid:taskqueue:counters:tasks`
-- **项目任务集合**：`tenant:tenantid:project:proj-N:tasks`
-- **项目队列名**：`tenant_tenantid_proj_proj-N` (注意无冒号)
+3. **队列名生成逻辑问题**：在projectQueueName函数中，格式转换逻辑不完善，没有处理所有边缘情况
 
-### 2. 队列名处理逻辑
+4. **缺乏中心化的规范化函数**：缺少统一的前缀规范化函数，导致各处理逻辑不一致
 
-在BullMQ中创建队列时：
-- 规范化租户前缀：`tenant:tenantid:` → `tenant_tenantid_`
-- 设置空前缀：`prefix: ''`，避免BullMQ自动添加`bull:`前缀
+## 修复方案
 
-### 3. Bull Board监控集成
+我们实施了以下全面修复：
 
-- 队列适配器使用项目ID作为注册键
-- 队列选项始终使用空前缀：`prefix: ''`
-- 移除冗余参数：`addQueueToBoard(projectId)` 和 `removeQueueFromBoard(projectId)`
+### 1. 中心化前缀规范化
 
-### 4. 清理错误格式的Redis键
+添加`normalizeRedisPrefix`函数，统一处理所有前缀规范化逻辑：
+- 移除前导冒号
+- 确保尾部有且仅有一个冒号
 
-- 使用`scripts/clean-redis-keys.js`工具清理格式错误的键
-- 识别并清理前导冒号键和重复的项目键
+### 2. 多层次前缀处理
 
-## 最佳实践
+修复在以下多个层次的前缀和租户ID处理：
 
-1. **前缀一致性**：使用`BullMQTaskManager.setTenantId()`设置租户，自动处理所有前缀
-2. **队列创建**：通过`BullMQService.getProjectQueue()`创建队列，确保前缀正确
-3. **钩子函数**：每个公共方法使用`ensureTenantPrefixApplied()`确保前缀已正确应用
-4. **清理监控**：定期检查Bull Board监控面板，确保队列名称一致性
+1. **服务器请求入口 (server/index.ts)**
+   - 在请求处理初始阶段就规范化租户ID
+   - 避免错误格式传递给后续流程
 
-## 关于队列命名中避免冒号的说明
+2. **工具执行层 (tools.ts)**
+   - 防止错误格式的租户ID传递给工具执行逻辑
+   - 标准化租户参数处理
 
-BullMQ内部使用冒号作为键名分隔符，因此队列名称中不能包含冒号。我们的命名规则中：
+3. **任务管理器层 (BullMQTaskManager.ts)**
+   - 增强`setTenantId`方法，规范化租户ID
+   - 增强`ensureTenantPrefixApplied`方法，实时检测并修正前缀格式
 
-- Redis键：使用`tenant:tenantid:project:proj-1:metadata`格式（含冒号）
-- 队列名：使用`tenant_tenantid_proj_proj-1`格式（用下划线替代冒号）
+4. **服务层 (BullMQService.ts)**
+   - 修改`setPrefix`方法，确保前缀格式标准化
+   - 改进`getProjectQueue`方法，对已生成的队列名再次验证和修正
 
-这样既能保持Redis键的可读性，又能满足BullMQ对队列名的要求。 
+5. **基础数据类型层 (bullmq.ts)**
+   - 改进`createRedisKeys`函数，使用标准化前缀
+   - 确保所有键生成函数共享同样的规范化逻辑
+
+### 3. 队列名强制规范
+
+为确保队列名格式统一，我们实施了双重验证：
+
+1. 生成队列名时使用规范格式：`tenant_tenantid_proj_projectid`
+2. 队列使用前再次验证，确保遵循统一格式
+
+通过这些修改，系统现在能够：
+
+- **防止错误键创建**：在源头规范化所有租户ID和前缀
+- **自动修正格式问题**：对所有队列名执行统一格式验证
+- **保持向后兼容性**：能正确识别并使用之前的键格式
+
+这些修复不需要手动迁移数据，只需部署代码更新即可使新创建的队列和键使用正确的格式。
