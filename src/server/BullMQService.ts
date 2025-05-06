@@ -309,19 +309,6 @@ export class BullMQService {
         const projectTasksKey = redisKeys.projectTasks(projectId);
         await redis.sadd(projectTasksKey, taskId);
         
-        // --- 强制增加延迟 --- 
-        await new Promise(resolve => setTimeout(resolve, 100)); // 增加 100ms 延迟
-        // --- 结束延迟 --- 
-
-        // --- 临时调试/确认步骤 ---
-        const memberExists = await redis.sismember(projectTasksKey, taskId);
-        if (!memberExists) {
-            console.error(`!!! CRITICAL: Task ${taskId} was NOT added to Redis set for project ${projectId} immediately after sadd.`);
-            // 可以在这里抛出错误，或者至少记录下来
-            // throw new AppError(`Failed to reliably add task ${taskId} to project set ${projectId}`, AppErrorCode.RedisCommandError);
-        }
-        // --- 结束调试步骤 ---
-
         taskIds.push(taskId);
       }
       
@@ -448,6 +435,13 @@ export class BullMQService {
       const projectTasksKey = redisKeys.projectTasks(projectId);
       const isMember = await redis.sismember(projectTasksKey, taskId);
       if (!isMember) {
+        console.error(`任务 ${taskId} 不存在于项目 ${projectId} 的任务集合 ${projectTasksKey} 中。`);
+        try {
+            const members = await redis.smembers(projectTasksKey);
+            console.error(`当前集合 ${projectTasksKey} 内容: ${members.join(', ')}`);
+        } catch (smembersError) {
+            console.error(`获取集合 ${projectTasksKey} 内容时出错:`, smembersError);
+        }
         throw new AppError(
           `任务 ${taskId} 不存在于项目 ${projectId} 中`,
           AppErrorCode.TaskNotFound
