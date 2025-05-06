@@ -15,14 +15,14 @@ import { UpdateTaskSuccessData } from '../types/response.js';
  */
 const listProjectsTool: Tool = {
   name: "list_projects",
-  description: "List all projects in the system and their basic information (ID, initial prompt, task counts), optionally filtered by state (open, pending_approval, completed, all).",
+  description: "列出系统中所有项目及其基本信息（ID、初始提示、任务数量），可选按状态过滤（open、pending_approval、completed、all）。基于Redis分布式队列，支持高并发查询。",
   inputSchema: {
     type: "object",
     properties: {
       state: {
         type: "string",
         enum: ["open", "pending_approval", "completed", "all"],
-        description: "Filter projects by state. 'open' (any incomplete task), 'pending_approval' (any tasks awaiting approval), 'completed' (all tasks done and approved), or 'all' to skip filtering.",
+        description: "按状态筛选项目。'open'（任何未完成任务）、'pending_approval'（任何等待审批的任务）、'completed'（所有任务已完成并已审批）或'all'跳过筛选。",
       },
     },
     required: [],
@@ -36,13 +36,13 @@ const listProjectsTool: Tool = {
  */
 const readProjectTool: Tool = {
   name: "read_project",
-  description: "Read all information for a given project, by its ID, including its tasks' statuses.",
+  description: "通过ID读取项目的所有信息，包括任务状态。使用Redis作为后端存储，实现毫秒级响应时间和高可靠性。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to read (e.g., proj-1).",
+        description: "要读取的项目ID（例如，proj-1）。",
       },
     },
     required: ["projectId"],
@@ -56,39 +56,39 @@ const readProjectTool: Tool = {
  */
 const createProjectTool: Tool = {
   name: "create_project",
-  description: "Create a new project with an initial prompt and a list of tasks. This is typically the first step in any workflow.",
+  description: "创建一个新项目，包含初始提示和任务列表。任务将作为分布式队列中的作业进行处理，支持优先级、延迟执行和自动重试机制。这通常是任何工作流程的第一步。",
   inputSchema: {
     type: "object",
     properties: {
       initialPrompt: {
         type: "string",
-        description: "The initial prompt or goal for the project.",
+        description: "项目的初始提示或目标。",
       },
       projectPlan: {
         type: "string",
-        description: "A more detailed plan for the project. If not provided, the initial prompt will be used.",
+        description: "项目的更详细计划。如果未提供，将使用初始提示。",
       },
       tasks: {
         type: "array",
-        description: "An array of task objects.",
+        description: "任务对象数组，每个任务将作为独立作业加入队列进行处理。",
         items: {
           type: "object",
           properties: {
             title: {
               type: "string",
-              description: "The title of the task.",
+              description: "任务的标题。",
             },
             description: {
               type: "string",
-              description: "A detailed description of the task.",
+              description: "任务的详细描述。",
             },
             toolRecommendations: {
               type: "string",
-              description: "Recommendations for tools to use to complete the task.",
+              description: "完成任务建议使用的工具。",
             },
             ruleRecommendations: {
               type: "string",
-              description: "Recommendations for relevant rules to review when completing the task.",
+              description: "完成任务时建议查看的相关规则。",
             },
           },
           required: ["title", "description"],
@@ -96,7 +96,7 @@ const createProjectTool: Tool = {
       },
       autoApprove: {
         type: "boolean",
-        description: "If true, tasks will be automatically approved when marked as done. If false or not provided, tasks require manual approval.",
+        description: "如果为true，任务标记为完成时将自动审批。如果为false或未提供，任务需要手动审批。",
       },
     },
     required: ["initialPrompt", "tasks"],
@@ -110,13 +110,13 @@ const createProjectTool: Tool = {
  */
 const deleteProjectTool: Tool = {
   name: "delete_project",
-  description: "Delete a project and all its associated tasks.",
+  description: "删除项目及其所有关联任务。系统将自动清理队列、移除Redis中的任务数据，并释放相关资源。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to delete (e.g., proj-1).",
+        description: "要删除的项目ID（例如，proj-1）。",
       },
     },
     required: ["projectId"],
@@ -130,35 +130,35 @@ const deleteProjectTool: Tool = {
  */
 const addTasksToProjectTool: Tool = {
   name: "add_tasks_to_project",
-  description: "Add new tasks to an existing project.",
+  description: "向现有项目添加新任务。任务将作为BullMQ作业添加到Redis队列中，支持FIFO/LIFO处理顺序，以及任务优先级设置。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to add tasks to (e.g., proj-1).",
+        description: "要添加任务的项目ID（例如，proj-1）。",
       },
       tasks: {
         type: "array",
-        description: "An array of task objects to add.",
+        description: "要添加的任务对象数组。",
         items: {
           type: "object",
           properties: {
             title: {
               type: "string",
-              description: "The title of the task.",
+              description: "任务的标题。",
             },
             description: {
               type: "string",
-              description: "A detailed description of the task.",
+              description: "任务的详细描述。",
             },
             toolRecommendations: {
               type: "string",
-              description: "Recommendations for tools to use to complete the task.",
+              description: "完成任务建议使用的工具。",
             },
             ruleRecommendations: {
               type: "string",
-              description: "Recommendations for relevant rules to review when completing the task.",
+              description: "完成任务时建议查看的相关规则。",
             },
           },
           required: ["title", "description"],
@@ -176,13 +176,13 @@ const addTasksToProjectTool: Tool = {
  */
 const finalizeProjectTool: Tool = {
   name: "finalize_project",
-  description: "Mark a project as complete. Can only be called when all tasks are both done and approved. This is typically the last step in a project workflow.",
+  description: "将项目标记为完成。只有当所有任务都已完成并审批时才能调用。系统将验证所有任务的状态，确保完整性后更新项目元数据。这通常是项目工作流程的最后一步。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to finalize (e.g., proj-1).",
+        description: "要完成的项目ID（例如，proj-1）。",
       },
     },
     required: ["projectId"],
@@ -196,29 +196,29 @@ const finalizeProjectTool: Tool = {
  */
 const generateProjectPlanTool: Tool = {
   name: "generate_project_plan",
-  description: "Use an LLM to generate a project plan and tasks from a prompt. The LLM will analyze the prompt and any attached files to create a structured project plan.",
+  description: "使用LLM从提示生成项目计划和任务。LLM将分析提示和任何附加文件以创建结构化项目计划，任务将自动添加到分布式任务队列中进行后续处理。",
   inputSchema: {
     type: "object",
     properties: {
       prompt: {
         type: "string",
-        description: "The prompt text or file path to use for generating the project plan.",
+        description: "用于生成项目计划的提示文本或文件路径。",
       },
       provider: {
         type: "string",
         enum: ["openai", "google", "deepseek"],
-        description: "The LLM provider to use (requires corresponding API key to be set).",
+        description: "要使用的LLM提供者（需要设置相应的API密钥）。",
       },
       model: {
         type: "string",
-        description: "The specific model to use (e.g., 'gpt-4-turbo' for OpenAI).",
+        description: "要使用的特定模型（例如，OpenAI的'gpt-4-turbo'）。",
       },
       attachments: {
         type: "array",
         items: {
           type: "string",
         },
-        description: "Optional array of paths to files to attach as context. There is no need to read the files before calling this tool!",
+        description: "可选的作为上下文附加的文件路径数组。调用此工具前无需阅读这些文件！",
       },
     },
     required: ["prompt", "provider", "model"],
@@ -234,18 +234,18 @@ const generateProjectPlanTool: Tool = {
  */
 const listTasksTool: Tool = {
   name: "list_tasks",
-  description: "List all tasks, optionally filtered by project ID and/or state (open, pending_approval, completed, all). Tasks may include tool and rule recommendations to guide their completion.",
+  description: "列出所有任务，可选按项目ID和/或状态（open、pending_approval、completed、all）过滤。支持实时状态查询，利用Redis高性能索引快速检索任务数据。任务可能包含指导其完成的工具和规则建议。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to list tasks from. If omitted, list all tasks.",
+        description: "要列出任务的项目ID。如果省略，列出所有任务。",
       },
       state: {
         type: "string",
         enum: ["open", "pending_approval", "completed", "all"],
-        description: "Filter tasks by state. 'open' (not started/in progress), 'pending_approval', 'completed', or 'all' to skip filtering.",
+        description: "按状态筛选任务。'open'（未开始/进行中），'pending_approval'，'completed'，或'all'跳过筛选。",
       },
     },
     required: [], // Neither projectId nor state is required, both are optional filters
@@ -259,17 +259,17 @@ const listTasksTool: Tool = {
  */
 const readTaskTool: Tool = {
   name: "read_task",
-  description: "Get details of a specific task by its ID. The task may include toolRecommendations and ruleRecommendations fields that should be used to guide task completion.",
+  description: "通过ID获取特定任务的详细信息。任务数据存储在Redis中，支持高速访问和可靠性。任务可能包含toolRecommendations和ruleRecommendations字段，应用于指导任务完成。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project containing the task (e.g., proj-1).",
+        description: "包含任务的项目ID（例如，proj-1）。",
       },
       taskId: {
         type: "string",
-        description: "The ID of the task to read (e.g., task-1).",
+        description: "要读取的任务ID（例如，task-1）。",
       },
     },
     required: ["projectId", "taskId"],
@@ -283,29 +283,29 @@ const readTaskTool: Tool = {
  */
 const createTaskTool: Tool = {
   name: "create_task",
-  description: "Create a new task within an existing project. You can optionally include tool and rule recommendations to guide task completion.",
+  description: "在现有项目中创建新任务。任务将作为BullMQ作业存储在Redis中，支持自动重试、延迟执行和优先级设置。您可以选择包含工具和规则建议以指导任务完成。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to add the task to (e.g., proj-1).",
+        description: "要添加任务的项目ID（例如，proj-1）。",
       },
       title: {
         type: "string",
-        description: "The title of the task.",
+        description: "任务的标题。",
       },
       description: {
         type: "string",
-        description: "A detailed description of the task.",
+        description: "任务的详细描述。",
       },
       toolRecommendations: {
         type: "string",
-        description: "Recommendations for tools to use to complete the task.",
+        description: "完成任务建议使用的工具。",
       },
       ruleRecommendations: {
         type: "string",
-        description: "Recommendations for relevant rules to review when completing the task.",
+        description: "完成任务时建议查看的相关规则。",
       }
     },
     required: ["projectId", "title", "description"]
@@ -319,42 +319,42 @@ const createTaskTool: Tool = {
  */
 const updateTaskTool: Tool = {
   name: "update_task",
-  description: "Modify a task's properties. Note: (1) completedDetails are required when setting status to 'done', (2) approved tasks cannot be modified, (3) status must follow valid transitions: not started → in progress → done. You can also update tool and rule recommendations to guide task completion.",
+  description: "修改任务属性。系统支持实时更新，任务状态变更会触发相应的事件通知。注意：(1)设置状态为'done'时需要completedDetails，(2)已审批的任务无法修改，(3)状态必须遵循有效转换：not started → in progress → done。您还可以更新工具和规则建议以指导任务完成。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project containing the task (e.g., proj-1).",
+        description: "包含任务的项目ID（例如，proj-1）。",
       },
       taskId: {
         type: "string",
-        description: "The ID of the task to update (e.g., task-1).",
+        description: "要更新的任务ID（例如，task-1）。",
       },
       title: {
         type: "string",
-        description: "The new title for the task (optional).",
+        description: "任务的新标题（可选）。",
       },
       description: {
         type: "string",
-        description: "The new description for the task (optional).",
+        description: "任务的新描述（可选）。",
       },
       status: {
         type: "string",
         enum: ["not started", "in progress", "done"],
-        description: "The new status for the task (optional).",
+        description: "任务的新状态（可选）。",
       },
       completedDetails: {
         type: "string",
-        description: "Details about the task completion (required if status is set to 'done').",
+        description: "任务完成的详细信息（如果状态设置为'done'则必需）。",
       },
       toolRecommendations: {
         type: "string",
-        description: "Recommendations for tools to use to complete the task.",
+        description: "完成任务建议使用的工具。",
       },
       ruleRecommendations: {
         type: "string",
-        description: "Recommendations for relevant rules to review when completing the task.",
+        description: "完成任务时建议查看的相关规则。",
       }
     },
     required: ["projectId", "taskId"], // title, description, status are optional, but completedDetails is conditionally required
@@ -368,17 +368,17 @@ const updateTaskTool: Tool = {
  */
 const deleteTaskTool: Tool = {
   name: "delete_task",
-  description: "Remove a task from a project.",
+  description: "从项目中移除任务。操作将从Redis队列中删除任务作业，并清除相关元数据，支持原子性操作以确保数据一致性。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project containing the task (e.g., proj-1).",
+        description: "包含任务的项目ID（例如，proj-1）。",
       },
       taskId: {
         type: "string",
-        description: "The ID of the task to delete (e.g., task-1).",
+        description: "要删除的任务ID（例如，task-1）。",
       },
     },
     required: ["projectId", "taskId"],
@@ -392,17 +392,17 @@ const deleteTaskTool: Tool = {
  */
 const approveTaskTool: Tool = {
   name: "approve_task",
-  description: "Approve a completed task. Tasks must be marked as 'done' with completedDetails before approval. Note: This is a CLI-only operation that requires human intervention.",
+  description: "审批已完成的任务。任务必须标记为'done'并提供completedDetails才能审批。系统利用BullMQ事件机制追踪任务状态变更，并支持自动化工作流程。注意：这是仅限CLI的操作，需要人工干预。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project containing the task (e.g., proj-1).",
+        description: "包含任务的项目ID（例如，proj-1）。",
       },
       taskId: {
         type: "string",
-        description: "The ID of the task to approve (e.g., task-1).",
+        description: "要审批的任务ID（例如，task-1）。",
       }
     },
     required: ["projectId", "taskId"]
@@ -416,13 +416,13 @@ const approveTaskTool: Tool = {
  */
 const getNextTaskTool: Tool = {
   name: "get_next_task",
-  description: "Get the next task to be done in a project. Returns the first non-approved task in sequence, regardless of status. The task may include toolRecommendations and ruleRecommendations fields that should be used to guide task completion.",
+  description: "获取项目中下一个要完成的任务。系统基于BullMQ队列的FIFO原则返回序列中第一个未审批的任务，无论其状态如何。利用Redis高性能查询，确保毫秒级响应时间。任务可能包含toolRecommendations和ruleRecommendations字段，应用于指导任务完成。",
   inputSchema: {
     type: "object",
     properties: {
       projectId: {
         type: "string",
-        description: "The ID of the project to get the next task from (e.g., proj-1).",
+        description: "要获取下一个任务的项目ID（例如，proj-1）。",
       },
     },
     required: ["projectId"],
