@@ -11,7 +11,7 @@ services:
       - MODE=${MODE:-rest}
       - PORT=${PORT:-9093}
       - ENDPOINT=${ENDPOINT:-/rest}
-      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_HOST=${REDIS_HOST:-redis_tq_mcp}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_DB=${REDIS_DB:-0}
@@ -28,11 +28,11 @@ services:
       - ${PORT:-9093}:9093
       - ${BULL_BOARD_PORT:-9094}:9094
     depends_on:
-      - redis
+      - redis_tq_mcp
     networks:
       - dokploy-network
 
-  redis:
+  redis_tq_mcp:
     image: redis:alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
