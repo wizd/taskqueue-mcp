@@ -481,11 +481,11 @@ export class BullMQTaskManager extends TaskManagerBase {
     await this.ensureInitialized();
     
     try {
-      const projects = await this.bullMQService.listProjects(state);
+      const projectsFromService = await this.bullMQService.listProjects(state);
       
       // 获取每个项目的任务统计信息
       const projectsWithStats = await Promise.all(
-        projects.map(async project => {
+        projectsFromService.map(async project => {
           const tasks = await this.bullMQService.listTasks(project.projectId);
           
           const completedTasks = tasks.filter(t => t.status === "done").length;
@@ -496,7 +496,8 @@ export class BullMQTaskManager extends TaskManagerBase {
             initialPrompt: project.initialPrompt,
             totalTasks: tasks.length,
             completedTasks,
-            approvedTasks
+            approvedTasks,
+            ...(project.tenantId !== undefined && { tenantId: project.tenantId }), // 从 service 返回的 project 中获取 tenantId
           };
         })
       );
@@ -668,15 +669,16 @@ export class BullMQTaskManager extends TaskManagerBase {
     await this.ensureInitialized();
     
     try {
-      const project = await this.bullMQService.readProject(projectId);
+      const projectFromService = await this.bullMQService.readProject(projectId);
       
       return {
-        projectId: project.projectId,
-        initialPrompt: project.initialPrompt,
-        projectPlan: project.projectPlan,
-        completed: project.completed,
-        autoApprove: project.autoApprove,
-        tasks: project.tasks
+        projectId: projectFromService.projectId,
+        initialPrompt: projectFromService.initialPrompt,
+        projectPlan: projectFromService.projectPlan,
+        completed: projectFromService.completed,
+        autoApprove: projectFromService.autoApprove,
+        tasks: projectFromService.tasks,
+        ...(projectFromService.tenantId !== undefined && { tenantId: projectFromService.tenantId }),
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -731,7 +733,8 @@ export class BullMQTaskManager extends TaskManagerBase {
       approved: taskData.approved,
       completedDetails: taskData.completedDetails,
       toolRecommendations: taskData.toolRecommendations,
-      ruleRecommendations: taskData.ruleRecommendations
+      ruleRecommendations: taskData.ruleRecommendations,
+      ...(taskData.tenantId !== undefined && { tenantId: taskData.tenantId }), // 添加 tenantId
     };
   }
 

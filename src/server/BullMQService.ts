@@ -191,6 +191,18 @@ export class BullMQService {
   }
 
   /**
+   * 从前缀中提取租户ID
+   * @returns 租户ID或undefined
+   */
+  private _getTenantIdFromPrefix(): string | undefined {
+    if (this.options.prefix && this.options.prefix.startsWith('tenant:') && this.options.prefix.endsWith(':')) {
+      // 提取 tenant:XXX: 中的 XXX 部分
+      return this.options.prefix.substring('tenant:'.length, this.options.prefix.length - 1);
+    }
+    return undefined;
+  }
+
+  /**
    * 创建新项目
    * @param initialPrompt 初始提示
    * @param projectPlan 项目计划
@@ -213,6 +225,9 @@ export class BullMQService {
       this.projectCounter = await redis.incr(projectCounterKey);
       const projectId = `proj-${this.projectCounter}`;
       
+      // 获取租户ID
+      const tenantId = this._getTenantIdFromPrefix();
+
       // 创建项目元数据
       const projectData: BullMQProjectData = {
         projectId,
@@ -220,7 +235,9 @@ export class BullMQService {
         projectPlan: projectPlan || initialPrompt,
         completed: false,
         autoApprove,
-        taskCount: 0
+        taskCount: 0,
+        // 如果tenantId存在，则添加它
+        ...(tenantId !== undefined && { tenantId }),
       };
       
       // 存储项目元数据到Redis哈希表 - 使用带前缀的键
@@ -269,7 +286,7 @@ export class BullMQService {
         );
       }
       
-      // 获取项目元数据
+      // 获取项目元数据（包含tenantId，如果存在）
       const projectData = await this.getProjectData(projectId);
       if (projectData.completed) {
         throw new AppError(
@@ -281,6 +298,11 @@ export class BullMQService {
       const queue = this.getProjectQueue(projectId);
       const taskIds: string[] = [];
       
+      // 从项目数据中获取租户ID，或者从当前服务前缀中获取
+      // 此处优先使用项目已有的tenantId (如果有)，保证任务的tenantId与项目一致
+      // 如果项目没有tenantId (例如旧数据), 则尝试从当前服务前缀获取
+      const tenantId = projectData.tenantId || this._getTenantIdFromPrefix();
+
       // 添加每个任务到队列
       for (const taskDef of tasks) {
         const taskCounterKey = redisKeys.taskCounter();
@@ -296,7 +318,9 @@ export class BullMQService {
           completedDetails: "",
           toolRecommendations: taskDef.toolRecommendations,
           ruleRecommendations: taskDef.ruleRecommendations,
-          projectId
+          projectId,
+          // 如果tenantId存在，则添加它
+          ...(tenantId !== undefined && { tenantId }),
         };
         
         // 添加任务到项目队列，将 taskId 作为 jobId
@@ -345,21 +369,26 @@ export class BullMQService {
       const redisKeys = this.getRedisKeys();
       
       const projectMetadataKey = redisKeys.projectMetadata(projectId);
-      const projectData = await redis.hgetall(projectMetadataKey);
-      if (!projectData || Object.keys(projectData).length === 0) {
+      const projectDataFromRedis = await redis.hgetall(projectMetadataKey);
+      if (!projectDataFromRedis || Object.keys(projectDataFromRedis).length === 0) {
         throw new AppError(
           `项目 ${projectId} 不存在`,
           AppErrorCode.ProjectNotFound
         );
       }
       
+      // 处理tenantId可能为 "undefined" 字符串的情况或不存在的情况
+      const rawTenantId = projectDataFromRedis.tenantId;
+      const tenantId = rawTenantId === 'undefined' ? undefined : (rawTenantId || undefined);
+
       return {
         projectId,
-        initialPrompt: projectData.initialPrompt,
-        projectPlan: projectData.projectPlan,
-        completed: projectData.completed === 'true',
-        autoApprove: projectData.autoApprove === 'true',
-        taskCount: parseInt(projectData.taskCount || '0', 10)
+        initialPrompt: projectDataFromRedis.initialPrompt,
+        projectPlan: projectDataFromRedis.projectPlan,
+        completed: projectDataFromRedis.completed === 'true',
+        autoApprove: projectDataFromRedis.autoApprove === 'true',
+        taskCount: parseInt(projectDataFromRedis.taskCount || '0', 10),
+        ...(tenantId !== undefined && { tenantId }),
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -880,7 +909,8 @@ export class BullMQService {
         projectPlan: projectData.projectPlan,
         tasks: [], // 这里不填充任务详情，因为listProjects通常只需要摘要
         completed: projectData.completed,
-        autoApprove: projectData.autoApprove
+        autoApprove: projectData.autoApprove,
+        ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
       }));
     } catch (error) {
       console.error('Error in listProjects:', error);
@@ -1001,7 +1031,8 @@ export class BullMQService {
         approved: taskData.approved,
         completedDetails: taskData.completedDetails,
         toolRecommendations: taskData.toolRecommendations,
-        ruleRecommendations: taskData.ruleRecommendations
+        ruleRecommendations: taskData.ruleRecommendations,
+        ...(taskData.tenantId !== undefined && { tenantId: taskData.tenantId }),
       }));
     } catch (error) {
       if (error instanceof AppError) {
@@ -1220,7 +1251,8 @@ export class BullMQService {
         projectPlan: projectData.projectPlan,
         tasks,
         completed: projectData.completed,
-        autoApprove: projectData.autoApprove
+        autoApprove: projectData.autoApprove,
+        ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
       };
     } catch (error) {
       if (error instanceof AppError) {

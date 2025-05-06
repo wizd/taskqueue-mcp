@@ -38,6 +38,7 @@ export interface BullMQTaskData {
   toolRecommendations?: string;
   ruleRecommendations?: string;
   projectId: string; // 关联的项目ID
+  tenantId?: string; // 新增：租户ID
 }
 
 /**
@@ -50,6 +51,7 @@ export interface BullMQProjectData {
   completed: boolean;
   autoApprove?: boolean;
   taskCount: number; // 任务总数计数
+  tenantId?: string; // 新增：租户ID
 }
 
 /**
