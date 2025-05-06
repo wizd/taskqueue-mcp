@@ -4,7 +4,7 @@ import { AppError, AppErrorCode } from '../types/errors.js';
 import { RedisManager } from './RedisManager.js';
 import { BullMQServiceOptions, BullMQServiceState, RedisKeys, BullMQTaskData, BullMQProjectData } from '../types/bullmq.js';
 import { Task, Project } from '../types/data.js';
-import { addQueueToBoard } from './bullBoardMonitor.js';
+import { addQueueToBoard, removeQueueFromBoard } from './bullBoardMonitor.js';
 
 /**
  * BullMQ服务类
@@ -961,6 +961,14 @@ export class BullMQService {
       try {
         await queue.obliterate();
         this.queues.delete(RedisKeys.projectQueueName(projectId));
+        
+        // 从 Bull Board 中移除队列
+        try {
+          await removeQueueFromBoard(projectId);
+        } catch (error) {
+          // 即使从 Bull Board 移除失败，我们仍然继续操作
+          console.warn(`从 Bull Board 移除队列 ${projectId} 时出错，但不影响项目删除:`, error);
+        }
       } catch (error) {
         console.warn(`清理项目队列时出错: ${error}`);
         // 即使清理队列失败，我们仍然继续删除项目

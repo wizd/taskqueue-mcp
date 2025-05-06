@@ -1,4 +1,4 @@
-import { startBullBoard, addQueueToBoard } from '../../src/server/bullBoardMonitor.js';
+import { startBullBoard, addQueueToBoard, removeQueueFromBoard } from '../../src/server/bullBoardMonitor.js';
 import { RedisManager } from '../../src/server/RedisManager.js';
 import { BullMQService } from '../../src/server/BullMQService.js';
 import { RedisKeys } from '../../src/types/bullmq.js';
@@ -111,6 +111,25 @@ describe('Bull Board Monitor', () => {
     expect(returnedAPI.addQueue).toHaveBeenCalledTimes(1);
   });
 
+  it('应该能够从Bull Board中移除队列', async () => {
+    const { createBullBoard } = require('@bull-board/api');
+    
+    // 首先启动Bull Board
+    await startBullBoard(3000, '/bull-board');
+    
+    // 确保createBullBoard被调用，并返回removeQueue方法
+    expect(createBullBoard).toHaveBeenCalled();
+    const returnedAPI = createBullBoard.mock.results[0].value;
+    expect(returnedAPI.removeQueue).toBeDefined();
+    
+    // 模拟移除队列（首先需要添加一个队列）
+    await addQueueToBoard('proj-3');
+    await removeQueueFromBoard('proj-3');
+    
+    // 验证removeQueue被调用
+    expect(returnedAPI.removeQueue).toHaveBeenCalledTimes(1);
+  });
+
   it('应该在没有初始化时拒绝添加队列', async () => {
     // 重置状态，通过重新加载模块
     jest.resetModules();
@@ -118,5 +137,14 @@ describe('Bull Board Monitor', () => {
     
     // 尝试在Bull Board启动前添加队列
     await expect(addQueueToBoard('proj-4')).rejects.toThrow(AppError);
+  });
+
+  it('应该在没有初始化时优雅地处理移除队列请求（不抛出错误）', async () => {
+    // 重置状态，通过重新加载模块
+    jest.resetModules();
+    const { removeQueueFromBoard } = require('../../src/server/bullBoardMonitor.js');
+    
+    // 尝试在Bull Board启动前移除队列
+    await expect(removeQueueFromBoard('proj-4')).resolves.not.toThrow();
   });
 }); 
