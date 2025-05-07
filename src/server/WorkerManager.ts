@@ -7,7 +7,7 @@ import { RedisNamingValidator } from './RedisNamingValidator.js';
 import { Logger } from './Logger.js';
 import { google } from '@ai-sdk/google';
 import { generateText, GenerateTextResult } from 'ai';
-import { Project } from '../types/data.js';
+import { Project, Task } from '../types/data.js';
 
 /**
  * Worker管理器 - 负责为所有项目队列创建和管理Worker实例
@@ -21,6 +21,7 @@ export class WorkerManager {
   private logger: Logger;
   private initialized: boolean = false;
   private readProjectFunction?: (projectId: string) => Promise<Project>;
+  private finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>;
 
   /**
    * 创建WorkerManager实例
@@ -28,12 +29,14 @@ export class WorkerManager {
    * @param workerOptions Worker配置选项
    * @param prefix 可选的全局前缀
    * @param readProjectFunction 可选的读取项目数据的函数
+   * @param finalizeProjectFunction 可选的完成项目并保存总结的函数
    */
   constructor(
     redisOptions?: RedisOptions,
     workerOptions?: WorkerOptions,
     prefix?: string,
-    readProjectFunction?: (projectId: string) => Promise<Project>
+    readProjectFunction?: (projectId: string) => Promise<Project>,
+    finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>
   ) {
     // 强制 maxRetriesPerRequest: null，确保 BullMQ 兼容
     this.redisOptions = {
@@ -49,6 +52,7 @@ export class WorkerManager {
     // 初始化日志记录器
     this.logger = new Logger('WorkerManager');
     this.readProjectFunction = readProjectFunction; // 存储传入的函数
+    this.finalizeProjectFunction = finalizeProjectFunction; // 新增
     this.logger.info('WorkerManager已创建，等待初始化');
   }
 
@@ -353,17 +357,29 @@ export class WorkerManager {
       this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title}) (项目: ${projectId})`);
       await job.updateProgress(10);
 
-      let projectContextString = "项目上下文不可用或获取失败。";
+      let projectContextString = "项目核心上下文不可用或获取失败。";
       if (this.readProjectFunction) {
         try {
-          this.logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的上下文...`);
+          this.logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的核心上下文...`);
           const projectContext: Project = await this.readProjectFunction(projectId);
-          projectContextString = JSON.stringify(projectContext, null, 2);
-          this.logger.info(`成功获取项目 ${projectId} 的上下文 (任务 ${taskData.id})`);
+          // 为了LLM提示，我们在这里只序列化项目本身，避免循环引用或过大的上下文
+          const projectInfoForPrompt = { 
+            projectId: projectContext.projectId,
+            initialPrompt: projectContext.initialPrompt,
+            projectPlan: projectContext.projectPlan,
+            completed: projectContext.completed,
+            autoApprove: projectContext.autoApprove,
+            taskCount: projectContext.taskCount,
+            // 不在此处包含 projectContext.tasks 或 projectContext.projectConclusion
+            createdAt: projectContext.createdAt,
+            updatedAt: projectContext.updatedAt
+          };
+          projectContextString = JSON.stringify(projectInfoForPrompt, null, 2);
+          this.logger.info(`成功获取项目 ${projectId} 的核心上下文 (任务 ${taskData.id})`);
           await job.updateProgress(20);
         } catch (e) {
-          this.logger.error(`获取项目 ${projectId} 上下文失败 (任务 ${taskData.id}):`, e);
-          projectContextString = `获取项目上下文失败: ${e instanceof Error ? e.message : String(e)}`;
+          this.logger.error(`获取项目 ${projectId} 核心上下文失败 (任务 ${taskData.id}):`, e);
+          projectContextString = `获取项目核心上下文失败: ${e instanceof Error ? e.message : String(e)}`;
         }
       } else {
         this.logger.warn(`未提供 readProjectFunction 给 WorkerManager。无法获取任务 ${taskData.id} 的项目上下文。`);
@@ -428,6 +444,9 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       await job.updateProgress(100);
       
       this.logger.info(`任务 ${taskData.id} 处理完成，completedDetails已更新。`);
+
+      // 检查项目是否所有任务都已完成，并执行项目总结（如果需要）
+      await this.checkAndConcludeProject(projectId);
       
       return {
         taskId: taskData.id,
@@ -452,6 +471,105 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       }
       
       throw error;
+    }
+  }
+
+  private async checkAndConcludeProject(projectId: string): Promise<void> {
+    if (!this.readProjectFunction) {
+      this.logger.warn(`[ProjectConclude] 未提供 readProjectFunction，无法检查项目 ${projectId} 是否完成。`);
+      return;
+    }
+    if (!this.finalizeProjectFunction) {
+        this.logger.warn(`[ProjectConclude] 未提供 finalizeProjectFunction，无法完成项目 ${projectId}。`);
+        return;
+    }
+
+    try {
+      this.logger.info(`[ProjectConclude] 检查项目 ${projectId} 是否所有任务都已完成...`);
+      const project = await this.readProjectFunction(projectId);
+
+      if (project.completed) {
+        this.logger.info(`[ProjectConclude] 项目 ${projectId} 已经标记为完成，跳过总结。`);
+        return;
+      }
+
+      const allTasksDone = project.tasks && project.tasks.every(task => task.status === "done");
+
+      if (allTasksDone && project.tasks.length > 0) { // 确保有任务且所有任务都完成
+        this.logger.info(`[ProjectConclude] 项目 ${projectId} 所有任务均已完成，开始执行项目总结。`);
+        await this.concludeProject(projectId, project); // 传递 project 对象以避免再次读取
+      } else {
+        if (project.tasks.length === 0) {
+             this.logger.info(`[ProjectConclude] 项目 ${projectId} 没有任务，考虑直接标记完成或通过其他流程处理。当前跳过自动总结。`);
+        } else {
+            this.logger.info(`[ProjectConclude] 项目 ${projectId} 尚有未完成的任务，不执行项目总结。`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[ProjectConclude] 检查或执行项目 ${projectId} 总结时出错:`, error);
+    }
+  }
+
+  private async concludeProject(projectId: string, projectData: Project): Promise<void> {
+    this.logger.info(`[ConcludeProject] 开始为项目 ${projectId} 生成总结...`);
+
+    // 准备项目所有任务的详情字符串
+    let tasksDetailsString = projectData.tasks.map(task => 
+      `任务ID: ${task.id}\n标题: ${task.title}\n状态: ${task.status}\n审批状态: ${task.approved}\n完成详情: ${task.completedDetails || '无'}\n---`
+    ).join('\n\n');
+    if (!tasksDetailsString) tasksDetailsString = "该项目没有任务或未能获取任务详情。";
+
+    const projectContextForLLM = JSON.stringify({ 
+        projectId: projectData.projectId,
+        initialPrompt: projectData.initialPrompt,
+        projectPlan: projectData.projectPlan,
+        autoApprove: projectData.autoApprove,
+        taskCount: projectData.tasks.length,
+        createdAt: projectData.createdAt,
+        updatedAt: projectData.updatedAt,
+     }, null, 2);
+
+    const llmPrompt = 
+`你好！以下是一个项目的完整上下文信息，包括其所有任务的处理结果。
+
+<project_overview>
+${projectContextForLLM}
+</project_overview>
+
+<all_tasks_details>
+${tasksDetailsString}
+</all_tasks_details>
+
+现在，所有任务均已处理完毕。请你基于以上所有信息，为整个项目撰写一份最终的总结报告。
+这份报告应该概述项目的主要成果、遇到的挑战（如果有）、关键的学习点以及项目的整体完成情况。
+你的回复将作为项目的最终总结（projectConclusion）被保存下来。
+请确保内容全面、精炼，并能准确反映项目的整个生命周期。谢谢！`;
+
+    let projectLlmConclusion = "LLM项目总结失败或被跳过。";
+    try {
+      this.logger.info(`[ConcludeProject] 调用LLM为项目 ${projectId} 生成总结...`);
+      const modelProvider = google("gemini-2.0-flash-lite");
+      const { text: generatedConclusion } = await generateText({
+        model: modelProvider,
+        prompt: llmPrompt,
+      });
+      projectLlmConclusion = generatedConclusion;
+      this.logger.info(`[ConcludeProject] LLM为项目 ${projectId} 生成总结成功。`);
+    } catch (llmError) {
+      this.logger.error(`[ConcludeProject] LLM为项目 ${projectId} 生成总结失败:`, llmError);
+      projectLlmConclusion = `LLM项目总结失败: ${llmError instanceof Error ? llmError.message : String(llmError)}`;
+    }
+
+    if (this.finalizeProjectFunction) {
+      try {
+        this.logger.info(`[ConcludeProject] 调用 finalizeProjectFunction 保存项目 ${projectId} 的总结并标记完成...`);
+        await this.finalizeProjectFunction(projectId, projectLlmConclusion);
+        this.logger.info(`[ConcludeProject] 项目 ${projectId} 总结已保存并标记为完成。`);
+      } catch (finalizeError) {
+        this.logger.error(`[ConcludeProject] 调用 finalizeProjectFunction 完成项目 ${projectId} 时出错:`, finalizeError);
+      }
+    } else {
+      this.logger.error(`[ConcludeProject] finalizeProjectFunction 未定义，无法完成项目 ${projectId}。`);
     }
   }
 } 

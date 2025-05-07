@@ -32,12 +32,13 @@ export class BullMQService {
     this.options = options;
     this.redisManager = RedisManager.getInstance(options.connection);
     
-    // 创建WorkerManager实例，并传入 readProject 方法
+    // 创建WorkerManager实例，并传入 readProject 和 finalizeProject 方法
     this.workerManager = new WorkerManager(
       options.connection,
       options.workerOptions,
       options.prefix,
-      this.readProject.bind(this) // 新增参数
+      this.readProject.bind(this),
+      this.finalizeProject.bind(this) // 新增参数
     );
     
     this.initialize();
@@ -420,11 +421,9 @@ export class BullMQService {
         );
       }
       
-      // 处理tenantId可能为 "undefined" 字符串的情况或不存在的情况
       const rawTenantId = projectDataFromRedis.tenantId;
       const tenantId = rawTenantId === 'undefined' ? undefined : (rawTenantId || undefined);
       
-      // 处理时间戳字段，确保有默认值
       const createdAt = projectDataFromRedis.createdAt ? parseInt(projectDataFromRedis.createdAt, 10) : Date.now();
       const updatedAt = projectDataFromRedis.updatedAt ? parseInt(projectDataFromRedis.updatedAt, 10) : Date.now();
 
@@ -438,6 +437,7 @@ export class BullMQService {
         ...(tenantId !== undefined && { tenantId }),
         createdAt,
         updatedAt,
+        projectConclusion: projectDataFromRedis.projectConclusion,
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -815,6 +815,50 @@ export class BullMQService {
       }
       throw new AppError(
         '项目完成审批失败',
+        AppErrorCode.RedisCommandError,
+        error
+      );
+    }
+  }
+
+  /**
+   * 完成项目，保存总结并标记为已完成
+   * @param projectId 项目ID
+   * @param conclusion LLM生成的项目总结
+   */
+  public async finalizeProject(projectId: string, conclusion: string): Promise<void> {
+    this.ensureReady();
+
+    try {
+      const redis = this.redisManager.getConnection();
+      const redisKeys = this.getRedisKeys();
+
+      // 检查项目是否存在
+      const projectMetadataKey = redisKeys.projectMetadata(projectId);
+      const exists = await redis.exists(projectMetadataKey);
+      if (exists === 0) {
+        throw new AppError(
+          `项目 ${projectId} 不存在，无法完成。`,
+          AppErrorCode.ProjectNotFound
+        );
+      }
+
+      const currentTime = Date.now();
+
+      // 更新项目元数据
+      await redis.hset(projectMetadataKey, {
+        projectConclusion: conclusion,
+        completed: 'true',
+        updatedAt: currentTime.toString(),
+      });
+
+      console.log(`项目 ${projectId} 已完成，总结已保存。`);
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        `完成项目 ${projectId} 失败`,
         AppErrorCode.RedisCommandError,
         error
       );
@@ -1365,7 +1409,7 @@ export class BullMQService {
       const redis = this.redisManager.getConnection();
       const redisKeys = this.getRedisKeys();
       
-      // 获取项目数据
+      // 获取项目数据 (BullMQProjectData)
       const projectData = await this.getProjectData(projectId);
       
       // 获取项目的所有任务 - 使用 listTasks 确保使用相同的任务获取逻辑
@@ -1378,6 +1422,7 @@ export class BullMQService {
         tasks,
         completed: projectData.completed,
         autoApprove: projectData.autoApprove,
+        taskCount: projectData.taskCount, // 确保映射 taskCount
         ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
         createdAt: projectData.createdAt ? new Date(projectData.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: projectData.updatedAt ? new Date(projectData.updatedAt).toISOString() : new Date().toISOString()

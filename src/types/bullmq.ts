@@ -56,6 +56,7 @@ export interface BullMQProjectData {
   tenantId?: string; // 新增：租户ID
   createdAt: number; // 新增：创建时间戳
   updatedAt: number; // 新增：更新时间戳
+  projectConclusion?: string; // 新增：项目总结字段
 }
 
 /**

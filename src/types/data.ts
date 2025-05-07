@@ -20,6 +20,7 @@ export interface Task {
     tasks: Task[];
     completed: boolean;
     autoApprove?: boolean;
+    taskCount?: number;
     tenantId?: string;
     createdAt?: string;
     updatedAt?: string;
