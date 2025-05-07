@@ -42,7 +42,7 @@ export class TaskManagerFactory {
             },
             defaultJobOptions: {
               attempts: 3,
-              removeOnComplete: true
+              removeOnComplete: false
             }
           });
           break;

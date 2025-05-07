@@ -75,7 +75,7 @@ export class WorkerManager {
       this.workerOptions = {
         ...this.workerOptions,
         connection, // 确保使用初始化后的连接
-        concurrency: this.workerOptions?.concurrency ?? 5,
+        concurrency: 1, // 强制并发为1，实现项目内串行
         lockDuration: this.workerOptions?.lockDuration ?? 30000,
         stalledInterval: this.workerOptions?.stalledInterval ?? 30000,
         maxStalledCount: this.workerOptions?.maxStalledCount ?? 1,
