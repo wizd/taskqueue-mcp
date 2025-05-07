@@ -5,6 +5,9 @@ import { RedisManager } from './RedisManager.js';
 import { RedisOptions } from 'ioredis';
 import { RedisNamingValidator } from './RedisNamingValidator.js';
 import { Logger } from './Logger.js';
+import { google } from '@ai-sdk/google';
+import { generateText, GenerateTextResult } from 'ai';
+import { Project } from '../types/data.js';
 
 /**
  * Worker管理器 - 负责为所有项目队列创建和管理Worker实例
@@ -17,17 +20,20 @@ export class WorkerManager {
   private prefix?: string;
   private logger: Logger;
   private initialized: boolean = false;
+  private readProjectFunction?: (projectId: string) => Promise<Project>;
 
   /**
    * 创建WorkerManager实例
    * @param redisOptions Redis连接选项
    * @param workerOptions Worker配置选项
    * @param prefix 可选的全局前缀
+   * @param readProjectFunction 可选的读取项目数据的函数
    */
   constructor(
-    redisOptions?: RedisOptions, 
+    redisOptions?: RedisOptions,
     workerOptions?: WorkerOptions,
-    prefix?: string
+    prefix?: string,
+    readProjectFunction?: (projectId: string) => Promise<Project>
   ) {
     // 强制 maxRetriesPerRequest: null，确保 BullMQ 兼容
     this.redisOptions = {
@@ -42,6 +48,7 @@ export class WorkerManager {
     
     // 初始化日志记录器
     this.logger = new Logger('WorkerManager');
+    this.readProjectFunction = readProjectFunction; // 存储传入的函数
     this.logger.info('WorkerManager已创建，等待初始化');
   }
 
@@ -340,59 +347,96 @@ export class WorkerManager {
    */
   private async processorFn(job: Job<BullMQTaskData>): Promise<any> {
     const taskData = job.data;
+    const projectId = taskData.projectId;
     
     try {
-      // 记录开始处理
-      this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title})`);
-      
-      // 设置任务为"正在处理"状态
-      await job.updateProgress(30);
+      this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title}) (项目: ${projectId})`);
+      await job.updateProgress(10);
+
+      let projectContextString = "项目上下文不可用或获取失败。";
+      if (this.readProjectFunction) {
+        try {
+          this.logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的上下文...`);
+          const projectContext: Project = await this.readProjectFunction(projectId);
+          projectContextString = JSON.stringify(projectContext, null, 2);
+          this.logger.info(`成功获取项目 ${projectId} 的上下文 (任务 ${taskData.id})`);
+          await job.updateProgress(20);
+        } catch (e) {
+          this.logger.error(`获取项目 ${projectId} 上下文失败 (任务 ${taskData.id}):`, e);
+          projectContextString = `获取项目上下文失败: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      } else {
+        this.logger.warn(`未提供 readProjectFunction 给 WorkerManager。无法获取任务 ${taskData.id} 的项目上下文。`);
+      }
+
       const inProgressTaskData: BullMQTaskData = {
         ...taskData,
         status: "in progress",
         updatedAt: Date.now()
       };
-      
       await job.updateData(inProgressTaskData);
+      this.logger.info(`任务 ${taskData.id} 状态更新为 "in progress"`);
       
-      // 任务实际处理逻辑 - 这里模拟3秒的处理时间
-      // 实际项目中，这里应该包含真正的业务逻辑
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      const llmPrompt = 
+`<project_context>
+${projectContextString}
+</project_context>
+
+<current_task>
+ID: ${taskData.id}
+Title: ${taskData.title}
+Description: ${taskData.description}
+Status: ${taskData.status}
+Approved: ${taskData.approved}
+${taskData.toolRecommendations ? `Tool Recommendations: ${taskData.toolRecommendations}` : ''}
+${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommendations}` : ''}
+</current_task>
+
+作为一个AI助手，您的目标是在给定的项目上下文中执行上述任务。
+请提供一份详细的报告，说明所采取的操作、观察结果以及任务的成果。此报告将用作任务的 'completedDetails'。
+请专注于满足任务标题和描述所规定的要求，并利用项目上下文获取相关信息和背景。
+项目的总体计划以及其他任务的状态（如果上下文中提供）可能相关。
+请仅输出完成情况报告。`;
       
-      // 随机决定是否模拟任务失败 (10%的概率失败)
-      if (Math.random() < 0.1) {
-        throw new Error('模拟的任务失败');
+      await job.updateProgress(30);
+
+      let llmResultText = "LLM处理被跳过或遇到问题。使用默认完成详情。";
+      try {
+        this.logger.info(`开始为任务 ${taskData.id} 调用LLM...`);
+        const modelProvider = google("gemini-2.0-flash-lite");
+        const { text: generatedText } = await generateText({
+            model: modelProvider,
+            prompt: llmPrompt,
+        });
+        llmResultText = generatedText;
+        this.logger.info(`LLM为任务 ${taskData.id} 推理成功。`);
+        await job.updateProgress(80);
+      } catch (llmError) {
+        this.logger.error(`LLM为任务 ${taskData.id} 推理失败:`, llmError);
+        llmResultText = `LLM推理失败: ${llmError instanceof Error ? llmError.message : String(llmError)}。原始任务描述: ${taskData.description}`;
       }
       
-      // 更新进度
-      await job.updateProgress(100);
-      
-      // 设置任务为"已完成"状态
       const completedData: BullMQTaskData = {
         ...taskData,
         status: "done",
-        completedDetails: `任务已由自动Worker处理完成，处理时间: ${new Date().toISOString()}`,
+        completedDetails: llmResultText,
         updatedAt: Date.now()
       };
       
       await job.updateData(completedData);
+      await job.updateProgress(100);
       
-      // 记录完成
-      this.logger.info(`任务 ${taskData.id} 处理完成`);
-      
-      // 可根据条件动态生成子任务
-      // 这里仅作示例，在实际项目中可实现更复杂的逻辑
+      this.logger.info(`任务 ${taskData.id} 处理完成，completedDetails已更新。`);
       
       return {
         taskId: taskData.id,
         status: "completed",
-        completionTime: new Date().toISOString()
+        completionTime: new Date().toISOString(),
+        llmOutputSummary: llmResultText.substring(0, 200) + (llmResultText.length > 200 ? "..." : "")
       };
     } catch (error) {
-      // 设置任务状态为出错
-      this.logger.error(`处理任务 ${taskData.id} 失败:`, error);
+      this.logger.error(`处理任务 ${taskData.id} 失败 (在 processorFn 的最外层捕获):`, error);
       
-      // 更新任务数据 - 使用正确的字面量类型
       const failedTaskData: BullMQTaskData = {
         ...taskData,
         status: "not started",
@@ -400,9 +444,12 @@ export class WorkerManager {
         updatedAt: Date.now()
       };
       
-      await job.updateData(failedTaskData);
+      try {
+        await job.updateData(failedTaskData);
+      } catch (updateError) {
+        this.logger.error(`更新任务 ${taskData.id} 数据为失败状态时再次出错:`, updateError);
+      }
       
-      // 重新抛出错误，让BullMQ处理重试逻辑
       throw error;
     }
   }

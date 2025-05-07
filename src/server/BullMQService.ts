@@ -32,11 +32,12 @@ export class BullMQService {
     this.options = options;
     this.redisManager = RedisManager.getInstance(options.connection);
     
-    // 创建WorkerManager实例
+    // 创建WorkerManager实例，并传入 readProject 方法
     this.workerManager = new WorkerManager(
       options.connection,
       options.workerOptions,
-      options.prefix
+      options.prefix,
+      this.readProject.bind(this) // 新增参数
     );
     
     this.initialize();
