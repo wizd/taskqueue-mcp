@@ -22,10 +22,10 @@ services:
       - BULL_BOARD_PORT=${BULL_BOARD_PORT:-3000}
       - BULL_BOARD_BASE_PATH=${BULL_BOARD_BASE_PATH:-/bull-board}
     expose:
-      - 9093
+      - ${PORT:-9093}
       - ${BULL_BOARD_PORT:-9094}
     ports:
-      - ${PORT:-9093}:9093
+      - ${PORT:-9093}:${PORT:-9093}
       - ${BULL_BOARD_PORT:-9094}:9094
     depends_on:
       - redis_tq_mcp
