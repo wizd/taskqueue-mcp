@@ -29,13 +29,16 @@ export class WorkerManager {
     workerOptions?: WorkerOptions,
     prefix?: string
   ) {
-    // 存储选项，但不立即初始化连接
-    this.redisOptions = redisOptions;
+    // 强制 maxRetriesPerRequest: null，确保 BullMQ 兼容
+    this.redisOptions = {
+      ...redisOptions,
+      maxRetriesPerRequest: null,
+    };
     this.workerOptions = workerOptions;
     this.prefix = normalizeRedisPrefix(prefix);
     
     // 获取RedisManager实例，但不立即使用连接
-    this.redisManager = RedisManager.getInstance(redisOptions);
+    this.redisManager = RedisManager.getInstance(this.redisOptions);
     
     // 初始化日志记录器
     this.logger = new Logger('WorkerManager');

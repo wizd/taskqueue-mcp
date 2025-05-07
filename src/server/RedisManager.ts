@@ -21,7 +21,12 @@ export class RedisManager {
    * @param options Redis连接选项
    */
   private constructor(options?: RedisOptions) {
-    this.connectionOptions = options || this.getDefaultOptions();
+    const defaultOptions = this.getDefaultOptions();
+    this.connectionOptions = {
+      ...defaultOptions,
+      ...options,
+      maxRetriesPerRequest: null,
+    };
   }
 
   /**
