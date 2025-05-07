@@ -35,7 +35,7 @@ services:
   redis_tq_mcp:
     image: redis:alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    command: redis-server --port ${REDIS_PORT:-6379} --appendonly yes --maxmemory-policy noeviction
     volumes:
       - ../files/redis-data:/data
     networks:
