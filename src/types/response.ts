@@ -66,6 +66,8 @@ export interface ProjectCreationSuccessData {
     completed: boolean;
     autoApprove?: boolean;
     tasks: Task[];
+    taskCount?: number;
+    projectConclusion?: string;
     tenantId?: string;
     createdAt?: string;
     updatedAt?: string;

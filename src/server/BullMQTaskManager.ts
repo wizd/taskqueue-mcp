@@ -680,6 +680,8 @@ export class BullMQTaskManager extends TaskManagerBase {
         completed: projectFromService.completed,
         autoApprove: projectFromService.autoApprove,
         tasks: projectFromService.tasks,
+        taskCount: projectFromService.taskCount,
+        projectConclusion: projectFromService.projectConclusion,
         ...(projectFromService.tenantId !== undefined && { tenantId: projectFromService.tenantId }),
         createdAt: projectFromService.createdAt,
         updatedAt: projectFromService.updatedAt,

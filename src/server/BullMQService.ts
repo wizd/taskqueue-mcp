@@ -1422,7 +1422,8 @@ export class BullMQService {
         tasks,
         completed: projectData.completed,
         autoApprove: projectData.autoApprove,
-        taskCount: projectData.taskCount, // 确保映射 taskCount
+        taskCount: projectData.taskCount, 
+        projectConclusion: projectData.projectConclusion, // 确保映射 projectConclusion
         ...(projectData.tenantId !== undefined && { tenantId: projectData.tenantId }),
         createdAt: projectData.createdAt ? new Date(projectData.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: projectData.updatedAt ? new Date(projectData.updatedAt).toISOString() : new Date().toISOString()

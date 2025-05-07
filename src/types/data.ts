@@ -21,6 +21,7 @@ export interface Task {
     completed: boolean;
     autoApprove?: boolean;
     taskCount?: number;
+    projectConclusion?: string;
     tenantId?: string;
     createdAt?: string;
     updatedAt?: string;
