@@ -153,7 +153,7 @@ const createProjectToolExecutor: ToolExecutor = {
     const initialPrompt = validateRequiredStringParam(args.initialPrompt, "initialPrompt");
     const validatedTasks = validateTaskObjects(args.tasks);
     const projectPlan = args.projectPlan !== undefined ? String(args.projectPlan) : undefined;
-    const autoApprove = args.autoApprove as boolean | undefined;
+    const autoApprove = args.autoApprove === false ? false : true;
 
     if (args.projectPlan !== undefined && typeof args.projectPlan !== 'string') {
       throw new AppError(
