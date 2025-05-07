@@ -29,6 +29,23 @@ Usually you will set the tool configuration in Claude Desktop, Cursor, or anothe
 }
 ```
 
+### 使用公共MCP服务器设置
+
+如果你想使用公共MCP服务器而不是本地运行服务，可以在Claude Desktop、Cursor或其他MCP客户端中使用以下配置：
+
+```json
+{
+  "tools": {
+    "taskqueue": {
+      "url": "https://taskqueue-public.vcorp.ai/rest/your-unique-chat-id",
+      "stream": true
+    }
+  }
+}
+```
+
+**注意**：请将`your-unique-chat-id`替换为你自己的唯一标识符，以确保你的数据与其他用户隔离。
+
 To use the CLI utility, you can install the package globally and then use the following command:
 
 ```bash
@@ -36,6 +53,32 @@ npx taskqueue --help
 ```
 
 This will show the available commands and options.
+
+## 部署和服务访问
+
+### 后台队列系统
+
+该项目使用BullMQ作为后台任务队列系统，无法直接执行。推荐通过Docker Compose进行部署，然后通过streaming HTTP协议访问。
+
+### Docker Compose部署
+
+使用以下命令启动服务：
+
+```bash
+docker-compose up -d
+```
+
+这将启动所有必要的服务，包括Redis实例（BullMQ依赖）和MCP服务器。
+
+### 公共MCP服务地址
+
+MCP服务可通过以下公共地址访问：
+
+```
+https://taskqueue-public.vcorp.ai/rest/[your-chat-id]
+```
+
+**重要提示**：请务必将`[your-chat-id]`修改为自己私有的一长串字符串，以免与其他用户的数据混淆。这个ID应该是唯一的，可以使用UUID或其他随机字符串生成器创建。
 
 ### Advanced Configuration
 
