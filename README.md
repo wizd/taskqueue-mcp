@@ -43,7 +43,7 @@ MCP Task Manager ([npm包: taskqueue-mcp](https://www.npmjs.com/package/taskqueu
 
 ```json
 {
-  "tools": {
+  "mcpServers": {
     "taskqueue": {
       "command": "npx",
       "args": ["-y", "taskqueue-mcp"]
@@ -58,7 +58,7 @@ MCP Task Manager ([npm包: taskqueue-mcp](https://www.npmjs.com/package/taskqueu
 
 ```json
 {
-  "tools": {
+  "mcpServers": {
     "taskqueue": {
       "url": "https://taskqueue-public.vcorp.ai/rest/your-unique-chat-id",
       "stream": true
