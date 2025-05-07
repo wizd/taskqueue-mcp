@@ -46,7 +46,7 @@ const taskManager = TaskManagerFactory.createTaskManager(MigrationMode.BULLMQ_ON
 const mode = getParamValue("MODE") || "stdio";
 const port = getParamValue("PORT") || 9593;
 const endpoint = getParamValue("ENDPOINT") || "/rest";
-const apiKey = process.env.API_KEY || "your-api-key";
+const apiKey = process.env.API_KEY || "";
 
 // Set up request handlers AFTER capabilities are configured
 server.setRequestHandler(ListToolsRequestSchema, async (request: any) => {
@@ -104,12 +104,12 @@ async function runServer() {
 
     // 根据模式选择传输方式
     if (mode === "rest") {
-      console.log("Using REST transport with API key:", apiKey);
+      console.log("Using REST transport with API key:", apiKey ? "已设置" : "未设置（认证已禁用）");
       const transport = new RestServerTransport({
         port,
         endpoint,
         supportTenantId: true,  // 启用多租户支持
-        bearerToken: apiKey,  // 启用认证支持
+        ...(apiKey ? { bearerToken: apiKey } : {}),  // 仅在apiKey有值时启用认证
       });
       await server.connect(transport);
       
