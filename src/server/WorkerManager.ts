@@ -378,10 +378,13 @@ export class WorkerManager {
       this.logger.info(`任务 ${taskData.id} 状态更新为 "in progress"`);
       
       const llmPrompt = 
-`<project_context>
+`你好！这里有一些关于当前项目的背景信息，以及一个需要你协助处理的具体任务。请先仔细阅读这些材料。
+
+<project_context>
 ${projectContextString}
 </project_context>
 
+接下来，这是你需要处理的具体任务：
 <current_task>
 ID: ${taskData.id}
 Title: ${taskData.title}
@@ -392,11 +395,9 @@ ${taskData.toolRecommendations ? `Tool Recommendations: ${taskData.toolRecommend
 ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommendations}` : ''}
 </current_task>
 
-作为一个AI助手，您的目标是在给定的项目上下文中执行上述任务。
-请提供一份详细的报告，说明所采取的操作、观察结果以及任务的成果。此报告将用作任务的 'completedDetails'。
-请专注于满足任务标题和描述所规定的要求，并利用项目上下文获取相关信息和背景。
-项目的总体计划以及其他任务的状态（如果上下文中提供）可能相关。
-请仅输出完成情况报告。`;
+现在，请你基于上述所有信息，像在平时对话那样，告诉我你将如何完成这项任务。请详细描述你的思考过程、计划采取的步骤、关键的观察点，以及预期的任务成果或结论。
+你的回复将被直接用作该任务的"完成详情"（completedDetails）记录下来。
+因此，请确保你的表述清晰、完整，并且紧扣任务的要求。谢谢！`;
       
       await job.updateProgress(30);
 
