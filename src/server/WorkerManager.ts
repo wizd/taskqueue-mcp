@@ -5,7 +5,7 @@ import { RedisManager } from './RedisManager.js';
 import { RedisOptions } from 'ioredis';
 import { RedisNamingValidator } from './RedisNamingValidator.js';
 import { Logger } from './Logger.js';
-import { google } from '@ai-sdk/google';
+import { google, createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText, GenerateTextResult } from 'ai';
 import { Project, Task } from '../types/data.js';
 
@@ -22,6 +22,7 @@ export class WorkerManager {
   private initialized: boolean = false;
   private readProjectFunction?: (projectId: string) => Promise<Project>;
   private finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>;
+  private googleApiKey?: string;
 
   /**
    * 创建WorkerManager实例
@@ -30,13 +31,15 @@ export class WorkerManager {
    * @param prefix 可选的全局前缀
    * @param readProjectFunction 可选的读取项目数据的函数
    * @param finalizeProjectFunction 可选的完成项目并保存总结的函数
+   * @param googleApiKey 可选的Google API Key
    */
   constructor(
     redisOptions?: RedisOptions,
     workerOptions?: WorkerOptions,
     prefix?: string,
     readProjectFunction?: (projectId: string) => Promise<Project>,
-    finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>
+    finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>,
+    googleApiKey?: string
   ) {
     // 强制 maxRetriesPerRequest: null，确保 BullMQ 兼容
     this.redisOptions = {
@@ -51,8 +54,9 @@ export class WorkerManager {
     
     // 初始化日志记录器
     this.logger = new Logger('WorkerManager');
-    this.readProjectFunction = readProjectFunction; // 存储传入的函数
-    this.finalizeProjectFunction = finalizeProjectFunction; // 新增
+    this.readProjectFunction = readProjectFunction;
+    this.finalizeProjectFunction = finalizeProjectFunction;
+    this.googleApiKey = googleApiKey;
     this.logger.info('WorkerManager已创建，等待初始化');
   }
 
@@ -420,7 +424,12 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       let llmResultText = "LLM处理被跳过或遇到问题。使用默认完成详情。";
       try {
         this.logger.info(`开始为任务 ${taskData.id} 调用LLM...`);
-        const modelProvider = google("gemini-2.0-flash-lite");
+        
+        const llmClient = this.googleApiKey 
+          ? createGoogleGenerativeAI({ apiKey: this.googleApiKey }) 
+          : google;
+        const modelProvider = llmClient("gemini-2.0-flash-lite");
+
         const { text: generatedText } = await generateText({
             model: modelProvider,
             prompt: llmPrompt,
@@ -548,7 +557,12 @@ ${tasksDetailsString}
     let projectLlmConclusion = "LLM项目总结失败或被跳过。";
     try {
       this.logger.info(`[ConcludeProject] 调用LLM为项目 ${projectId} 生成总结...`);
-      const modelProvider = google("gemini-2.0-flash-lite");
+      
+      const llmClient = this.googleApiKey 
+        ? createGoogleGenerativeAI({ apiKey: this.googleApiKey }) 
+        : google;
+      const modelProvider = llmClient("gemini-2.0-flash-lite");
+
       const { text: generatedConclusion } = await generateText({
         model: modelProvider,
         prompt: llmPrompt,

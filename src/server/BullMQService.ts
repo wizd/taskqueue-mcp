@@ -7,6 +7,7 @@ import { Task, Project } from '../types/data.js';
 import { addQueueToBoard, removeQueueFromBoard } from './bullBoardMonitor.js';
 import { RedisNamingValidator } from './RedisNamingValidator.js';
 import { WorkerManager } from './WorkerManager.js';
+import dotenv from 'dotenv';
 
 /**
  * BullMQ服务类
@@ -32,13 +33,18 @@ export class BullMQService {
     this.options = options;
     this.redisManager = RedisManager.getInstance(options.connection);
     
+    // 新增：加载环境变量
+    dotenv.config(); 
+    const googleApiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
     // 创建WorkerManager实例，并传入 readProject 和 finalizeProject 方法
     this.workerManager = new WorkerManager(
       options.connection,
       options.workerOptions,
       options.prefix,
       this.readProject.bind(this),
-      this.finalizeProject.bind(this) // 新增参数
+      this.finalizeProject.bind(this),
+      googleApiKey // 新增：传递API Key
     );
     
     this.initialize();
