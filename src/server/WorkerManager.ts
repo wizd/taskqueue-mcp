@@ -57,7 +57,7 @@ export class WorkerManager {
     this.readProjectFunction = readProjectFunction;
     this.finalizeProjectFunction = finalizeProjectFunction;
     this.googleApiKey = googleApiKey;
-    this.logger.info('WorkerManager已创建，等待初始化');
+    this.logger.info(`WorkerManager created. Received Google API Key: ${googleApiKey ? 'Exists (masked)' : 'Not provided or empty'}`);
   }
 
   /**
@@ -358,6 +358,8 @@ export class WorkerManager {
     const projectId = taskData.projectId;
     
     try {
+      // 新增日志：指示将使用的API Key状态
+      this.logger.info(`[ProcessorFn] Attempting to use Google API Key: ${this.googleApiKey ? 'Exists (masked)' : 'Not provided or empty, will rely on SDK default'}`);
       this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title}) (项目: ${projectId})`);
       await job.updateProgress(10);
 
@@ -521,6 +523,9 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
 
   private async concludeProject(projectId: string, projectData: Project): Promise<void> {
     this.logger.info(`[ConcludeProject] 开始为项目 ${projectId} 生成总结...`);
+
+    // 新增日志：指示将使用的API Key状态
+    this.logger.info(`[ConcludeProject] Attempting to use Google API Key for summary: ${this.googleApiKey ? 'Exists (masked)' : 'Not provided or empty, will rely on SDK default'}`);
 
     // 准备项目所有任务的详情字符串
     let tasksDetailsString = projectData.tasks.map(task => 
