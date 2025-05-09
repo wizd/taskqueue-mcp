@@ -22,6 +22,7 @@ import { FileSystemService } from "./FileSystemService.js";
 import { generateObject, jsonSchema } from "ai";
 import { TaskManagerBase } from "./TaskManagerBase.js";
 import { MigrationMode } from "../types/bullmq.js";
+import { modelProvider } from "../../lib/ai/provider.js";
 
 // Default path follows platform-specific conventions
 const DEFAULT_PATH = path.join(FileSystemService.getAppDataDir(), "tasks.json");
@@ -249,29 +250,6 @@ export class FileSystemTaskManager extends TaskManagerBase {
     for (const content of attachmentContents) {
       llmPrompt += `\n<attachment>${content}</attachment>`;
     }
-
-    // Import and configure the appropriate provider
-    // Import and configure the appropriate provider
-    const { google } = await import("@ai-sdk/google");
-    const modelProvider = google("gemini-2.0-flash-lite");
-
-    // let modelProvider;
-    // switch (provider) {
-    //   case "openai":
-    //     const { openai } = await import("@ai-sdk/openai");
-    //     modelProvider = openai(model);
-    //     break;
-    //   case "google":
-    //     const { google } = await import("@ai-sdk/google");
-    //     modelProvider = google(model);
-    //     break;
-    //   case "deepseek":
-    //     const { deepseek } = await import("@ai-sdk/deepseek");
-    //     modelProvider = deepseek(model);
-    //     break;
-    //   default:
-    //     throw new AppError(`Invalid provider: ${provider}`, AppErrorCode.InvalidProvider);
-    // }
 
     try {
       const { object } = await generateObject({

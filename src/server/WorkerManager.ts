@@ -8,6 +8,7 @@ import { Logger } from './Logger.js';
 import { google, createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText, GenerateTextResult } from 'ai';
 import { Project, Task } from '../types/data.js';
+import { modelProvider } from '../../lib/ai/provider.js';
 
 /**
  * Worker管理器 - 负责为所有项目队列创建和管理Worker实例
@@ -426,11 +427,7 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       let llmResultText = "LLM处理被跳过或遇到问题。使用默认完成详情。";
       try {
         this.logger.info(`开始为任务 ${taskData.id} 调用LLM...`);
-        
-        const llmClient = this.googleApiKey 
-          ? createGoogleGenerativeAI({ apiKey: this.googleApiKey }) 
-          : google;
-        const modelProvider = llmClient("gemini-2.0-flash-lite");
+      
 
         const { text: generatedText } = await generateText({
             model: modelProvider,
@@ -562,11 +559,6 @@ ${tasksDetailsString}
     let projectLlmConclusion = "LLM项目总结失败或被跳过。";
     try {
       this.logger.info(`[ConcludeProject] 调用LLM为项目 ${projectId} 生成总结...`);
-      
-      const llmClient = this.googleApiKey 
-        ? createGoogleGenerativeAI({ apiKey: this.googleApiKey }) 
-        : google;
-      const modelProvider = llmClient("gemini-2.0-flash-lite");
 
       const { text: generatedConclusion } = await generateText({
         model: modelProvider,

@@ -22,6 +22,7 @@ import { BullMQService } from "./BullMQService.js";
 import { TaskManagerBase } from "./TaskManagerBase.js";
 import { BullMQTaskData, BullMQServiceOptions } from "../types/bullmq.js";
 import { RedisNamingValidator } from "./RedisNamingValidator.js";
+import { modelProvider } from "../../lib/ai/provider.js";
 
 /**
  * BullMQ 任务管理器
@@ -220,28 +221,6 @@ export class BullMQTaskManager extends TaskManagerBase {
       llmPrompt += `\n<attachment>${content}</attachment>`;
     }
 
-    // 配置适当的提供者
-    // Import and configure the appropriate provider
-    const { google } = await import("@ai-sdk/google");
-    const modelProvider = google("gemini-2.0-flash-lite");
-
-    // let modelProvider;
-    // switch (provider) {
-    //   case "openai":
-    //     const { openai } = await import("@ai-sdk/openai");
-    //     modelProvider = openai(model);
-    //     break;
-    //   case "google":
-    //     const { google } = await import("@ai-sdk/google");
-    //     modelProvider = google(model);
-    //     break;
-    //   case "deepseek":
-    //     const { deepseek } = await import("@ai-sdk/deepseek");
-    //     modelProvider = deepseek(model);
-    //     break;
-    //   default:
-    //     throw new AppError(`Invalid provider: ${provider}`, AppErrorCode.InvalidProvider);
-    // }
 
     try {
       const { object } = await generateObject({
