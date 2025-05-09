@@ -1,12 +1,9 @@
 import { Worker, Job, WorkerOptions } from 'bullmq';
-import { Redis } from 'ioredis';
 import { BullMQTaskData, createRedisKeys, normalizeRedisPrefix } from '../types/bullmq.js';
 import { RedisManager } from './RedisManager.js';
 import { RedisOptions } from 'ioredis';
-import { RedisNamingValidator } from './RedisNamingValidator.js';
 import { Logger } from './Logger.js';
-import { google, createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText, GenerateTextResult } from 'ai';
+import { generateText } from 'ai';
 import { Project, Task } from '../types/data.js';
 import { modelProvider } from '../../lib/ai/provider.js';
 
@@ -23,7 +20,6 @@ export class WorkerManager {
   private initialized: boolean = false;
   private readProjectFunction?: (projectId: string) => Promise<Project>;
   private finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>;
-  private googleApiKey?: string;
 
   /**
    * 创建WorkerManager实例
@@ -32,15 +28,13 @@ export class WorkerManager {
    * @param prefix 可选的全局前缀
    * @param readProjectFunction 可选的读取项目数据的函数
    * @param finalizeProjectFunction 可选的完成项目并保存总结的函数
-   * @param googleApiKey 可选的Google API Key
    */
   constructor(
     redisOptions?: RedisOptions,
     workerOptions?: WorkerOptions,
     prefix?: string,
     readProjectFunction?: (projectId: string) => Promise<Project>,
-    finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>,
-    googleApiKey?: string
+    finalizeProjectFunction?: (projectId: string, conclusion: string) => Promise<void>
   ) {
     // 强制 maxRetriesPerRequest: null，确保 BullMQ 兼容
     this.redisOptions = {
@@ -57,8 +51,6 @@ export class WorkerManager {
     this.logger = new Logger('WorkerManager');
     this.readProjectFunction = readProjectFunction;
     this.finalizeProjectFunction = finalizeProjectFunction;
-    this.googleApiKey = googleApiKey;
-    this.logger.info(`WorkerManager created. Received Google API Key: ${googleApiKey ? 'Exists (masked)' : 'Not provided or empty'}`);
   }
 
   /**
@@ -359,8 +351,6 @@ export class WorkerManager {
     const projectId = taskData.projectId;
     
     try {
-      // 新增日志：指示将使用的API Key状态
-      this.logger.info(`[ProcessorFn] Attempting to use Google API Key: ${this.googleApiKey ? 'Exists (masked)' : 'Not provided or empty, will rely on SDK default'}`);
       this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title}) (项目: ${projectId})`);
       await job.updateProgress(10);
 
@@ -520,9 +510,6 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
 
   private async concludeProject(projectId: string, projectData: Project): Promise<void> {
     this.logger.info(`[ConcludeProject] 开始为项目 ${projectId} 生成总结...`);
-
-    // 新增日志：指示将使用的API Key状态
-    this.logger.info(`[ConcludeProject] Attempting to use Google API Key for summary: ${this.googleApiKey ? 'Exists (masked)' : 'Not provided or empty, will rely on SDK default'}`);
 
     // 准备项目所有任务的详情字符串
     let tasksDetailsString = projectData.tasks.map(task => 
