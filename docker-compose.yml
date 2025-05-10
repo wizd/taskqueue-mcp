@@ -22,6 +22,8 @@ services:
       - BULL_BOARD_PORT=${BULL_BOARD_PORT:-3000}
       - BULL_BOARD_BASE_PATH=${BULL_BOARD_BASE_PATH:-/bull-board}
       - XAI_API_KEY=${XAI_API_KEY}
+      - YTDLP_MCP_URL=${YTDLP_MCP_URL}
+      - YTDLP_MCP_API_KEY=${YTDLP_MCP_API_KEY}
     expose:
       - ${PORT:-9093}
       - ${BULL_BOARD_PORT:-9094}
