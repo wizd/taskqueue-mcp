@@ -1,7 +1,7 @@
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { experimental_createMCPClient } from 'ai';
 
-export async function createStreamHttpClient(tenantId: string, apiUrl: string, apiKey: string): Promise<Awaited<ReturnType<typeof experimental_createMCPClient>>> {
+export async function createStreamHttpClient(tenantId: string, apiUrl: string, apiKey: string) : Promise<any> {
     // 获取 bearer token
     const bearerToken = apiKey;
     
