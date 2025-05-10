@@ -24,6 +24,8 @@ services:
       - XAI_API_KEY=${XAI_API_KEY}
       - YTDLP_MCP_URL=${YTDLP_MCP_URL}
       - YTDLP_MCP_API_KEY=${YTDLP_MCP_API_KEY}
+      - VID_GEN_MCP_URL=${VID_GEN_MCP_URL}
+      - VID_GEN_MCP_API_KEY=${VID_GEN_MCP_API_KEY}
     expose:
       - ${PORT:-9093}
       - ${BULL_BOARD_PORT:-9094}

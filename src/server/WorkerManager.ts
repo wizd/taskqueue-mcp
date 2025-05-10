@@ -367,9 +367,20 @@ export class WorkerManager {
       }
       const mcpClient = await createStreamHttpClient("", ytdlp_url, ytdlp_api_key);
       mcpClientsToClose.push(mcpClient);
+
+      const vidgen_url = process.env.VID_GEN_MCP_URL;
+      const vidgen_api_key = process.env.VID_GEN_MCP_API_KEY;
+      if (!vidgen_url || !vidgen_api_key) {
+        throw new Error('VID_GEN_MCP_URL 或 VID_GEN_MCP_API_KEY 未配置');
+      }
+      const vidgenClient = await createStreamHttpClient("", vidgen_url, vidgen_api_key);
+      mcpClientsToClose.push(vidgenClient);
+
       const mcpTools = await mcpClient.tools();
+      const vidgenTools = await vidgenClient.tools();
       const tools = {
         ...mcpTools,
+        ...vidgenTools,
         //getWeather,
       };
       console.log('combined tools is ', tools);
@@ -442,7 +453,10 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
             model: modelProvider,
             prompt: llmPrompt,
             tools,
-            maxSteps: 5
+            maxSteps: 10,
+            onStepFinish: async (step) => {
+              console.log('onStepFinish', step);
+            }
         });
         llmResultText = generatedText;
         this.logger.info(`LLM为任务 ${taskData.id} 推理成功。`);
