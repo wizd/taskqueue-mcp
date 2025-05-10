@@ -45,7 +45,7 @@
 		"@bull-board/express": "^6.9.5",
 		"@modelcontextprotocol/sdk": "^1.11.0",
 		"@types/express": "^5.0.1",
-		"@wizdy/typescript-sdk": "^1.0.3",
+		"@wizdy/typescript-sdk": "^1.0.7",
 		"ai": "^4.2.10",
 		"bullmq": "^5.1.1",
 		"chalk": "^5.4.1",

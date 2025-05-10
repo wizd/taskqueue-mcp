@@ -3,9 +3,10 @@ import { BullMQTaskData, createRedisKeys, normalizeRedisPrefix } from '../types/
 import { RedisManager } from './RedisManager.js';
 import { RedisOptions } from 'ioredis';
 import { Logger } from './Logger.js';
-import { generateText } from 'ai';
+import { experimental_createMCPClient, generateText } from 'ai';
 import { Project, Task } from '../types/data.js';
 import { modelProvider } from '../../lib/ai/provider.js';
+import { createStreamHttpClient } from '../../lib/mcp/streamHttpClient.js';
 
 /**
  * Worker管理器 - 负责为所有项目队列创建和管理Worker实例
@@ -354,6 +355,25 @@ export class WorkerManager {
       this.logger.info(`开始处理任务 ${taskData.id} (${taskData.title}) (项目: ${projectId})`);
       await job.updateProgress(10);
 
+      // create mcp client
+      let mcpClientsToClose: Awaited<
+        ReturnType<typeof experimental_createMCPClient>
+      >[] = [];
+
+      const ytdlp_url = process.env.YTDLP_MCP_URL;
+      const ytdlp_api_key = process.env.YTDLP_MCP_API_KEY;
+      if (!ytdlp_url || !ytdlp_api_key) {
+        throw new Error('YTDLP_MCP_URL 或 YTDLP_MCP_API_KEY 未配置');
+      }
+      const mcpClient = await createStreamHttpClient("", ytdlp_url, ytdlp_api_key);
+      mcpClientsToClose.push(mcpClient);
+      const mcpTools = await mcpClient.tools();
+      const tools = {
+        ...mcpTools,
+        //getWeather,
+      };
+      console.log('combined tools is ', tools);
+
       let projectContextString = "项目核心上下文不可用或获取失败。";
       if (this.readProjectFunction) {
         try {
@@ -418,10 +438,11 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       try {
         this.logger.info(`开始为任务 ${taskData.id} 调用LLM...`);
       
-
         const { text: generatedText } = await generateText({
             model: modelProvider,
             prompt: llmPrompt,
+            tools,
+            maxSteps: 5
         });
         llmResultText = generatedText;
         this.logger.info(`LLM为任务 ${taskData.id} 推理成功。`);
@@ -446,6 +467,21 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
       // 检查项目是否所有任务都已完成，并执行项目总结（如果需要）
       await this.checkAndConcludeProject(projectId);
       
+      console.log(
+        `Closing ${mcpClientsToClose.length} MCP clients in onFinish...`,
+      );
+      for (const client of mcpClientsToClose) {
+        try {
+          await client.close();
+        } catch (closeError: unknown) {
+          console.error(
+            'Error closing MCP client in onFinish:',
+            closeError,
+          );
+        }
+      }
+      mcpClientsToClose = [];
+
       return {
         taskId: taskData.id,
         status: "completed",
