@@ -110,9 +110,9 @@ export async function HostVideoToR2(localVideoPath: string, tenantId: string, s3
         //   { label: '720p_custom', width: 1280, height: 720, videoBitrate: '2000k', audioBitrate: '128k' }
         // ],
         hlsTime: 6, // 6秒一个片段
-        s3KeyPrefix: 'my_videos/hls' // 自定义S3路径前缀
+        s3KeyPrefix: tenantId + '_videos/hls' // 自定义S3路径前缀
       },
-      tenantId + '_' + randomUUID(),
+      randomUUID(),
       // `custom-video-id-${Date.now()}`, // 可选的自定义 videoId
       true // 在成功上传后清理本地HLS文件
     );
