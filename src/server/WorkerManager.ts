@@ -422,13 +422,23 @@ export class WorkerManager {
       this.logger.info(`任务 ${taskData.id} 状态更新为 "in progress"`);
       
       const llmPrompt = 
-`你好！这里有一些关于当前项目的背景信息，以及一个需要你协助处理的具体任务。请先仔细阅读这些材料。
+`你好！在开始之前，请了解你可以使用以下工具来协助完成任务：
+
+<available_tools>
+- 视频下载工具：可下载数千个视频网站的视频、音频、字幕等数据。
+- FFmpeg执行工具：一个可执行任意FFmpeg命令的工具，用于音视频和图片的编辑剪辑。
+- 素材生成工具：基于Google Gemini，可生成图片和视频素材。
+</available_tools>
+
+请注意：除了上述明确列出的工具，所有其他的思考、分析、决策和执行步骤都需要由你独立完成。
+
+接下来，这里有一些关于当前项目的背景信息，以及一个需要你协助处理的具体任务。请先仔细阅读这些材料。
 
 <project_context>
 ${projectContextString}
 </project_context>
 
-接下来，这是你需要处理的具体任务：
+然后，这是你需要处理的具体任务：
 <current_task>
 ID: ${taskData.id}
 Title: ${taskData.title}
@@ -439,7 +449,7 @@ ${taskData.toolRecommendations ? `Tool Recommendations: ${taskData.toolRecommend
 ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommendations}` : ''}
 </current_task>
 
-现在，请你基于上述所有信息，像在平时对话那样，告诉我你将如何完成这项任务。请详细描述你的思考过程、计划采取的步骤、关键的观察点，以及预期的任务成果或结论。
+现在，请你基于上述所有信息，像在平时对话那样，告诉我你将如何完成这项任务。请详细描述你的思考过程、计划采取的步骤、关键的观察点（包括何时以及如何使用上述工具），以及预期的任务成果或结论。
 你的回复将被直接用作该任务的"完成详情"（completedDetails）记录下来。
 因此，请确保你的表述清晰、完整，并且紧扣任务的要求。谢谢！`;
       
