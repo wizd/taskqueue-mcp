@@ -25,6 +25,6 @@ if (fs.existsSync(envPath)) {
 // 记录重要的API密钥是否已加载（不显示实际值）
 console.log('测试环境变量状态:', {
     OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-    GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY
 }); 

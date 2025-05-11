@@ -80,7 +80,7 @@ describe('generate_project_plan Tool', () => {
       // Create a new context without the OpenAI API key
       const context = await setupTestContext(undefined, false, {
         OPENAI_API_KEY: '',
-        GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? ''
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? ''
       });
 
       try {
@@ -113,9 +113,9 @@ describe('generate_project_plan Tool', () => {
 
       try {
         // Skip if no Google API key is set
-        const googleApiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+        const googleApiKey = process.env.GEMINI_API_KEY;
         if (!googleApiKey) {
-          console.error('Skipping test: GOOGLE_GENERATIVE_AI_API_KEY not set');
+          console.error('Skipping test: GEMINI_API_KEY not set');
           return;
         }
 
@@ -175,7 +175,7 @@ describe('generate_project_plan Tool', () => {
       // Create a new context without the Google API key
       const context = await setupTestContext(undefined, false, {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-        GOOGLE_GENERATIVE_AI_API_KEY: ''
+        GEMINI_API_KEY: ''
       });
 
       try {
@@ -270,7 +270,7 @@ describe('generate_project_plan Tool', () => {
       // Create a new context without the Deepseek API key
       const context = await setupTestContext(undefined, false, {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-        GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? '',
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? '',
         DEEPSEEK_API_KEY: ''
       });
 

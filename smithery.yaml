@@ -33,7 +33,7 @@ startCommand:
       env: Object.assign({}, process.env,
         config.taskManagerFilePath ? { TASK_MANAGER_FILE_PATH: config.taskManagerFilePath } : {},
         config.openaiApiKey ? { OPENAI_API_KEY: config.openaiApiKey } : {},
-        config.googleGenerativeAiApiKey ? { GOOGLE_GENERATIVE_AI_API_KEY: config.googleGenerativeAiApiKey } : {},
+        config.googleGenerativeAiApiKey ? { GEMINI_API_KEY: config.googleGenerativeAiApiKey } : {},
         config.deepseekApiKey ? { DEEPSEEK_API_KEY: config.deepseekApiKey } : {}
       )
     })

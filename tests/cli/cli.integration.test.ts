@@ -140,13 +140,13 @@ describe("CLI Integration Tests", () => {
     beforeEach(() => {
       // Set mock API keys for testing
       process.env.OPENAI_API_KEY = 'test-key';
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY = 'test-key';
+      process.env.GEMINI_API_KEY = 'test-key';
       process.env.DEEPSEEK_API_KEY = 'test-key';
     });
 
     afterEach(() => {
       delete process.env.OPENAI_API_KEY;
-      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      delete process.env.GEMINI_API_KEY;
       delete process.env.DEEPSEEK_API_KEY;
     });
 

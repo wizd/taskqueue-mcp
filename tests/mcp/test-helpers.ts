@@ -23,7 +23,7 @@ if (result.error) {
 // 记录重要的API密钥是否存在
 const envCheck = {
   OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-  GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
   DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY
 };
 console.log('环境变量检查:', envCheck);
@@ -75,14 +75,14 @@ export async function setupTestContext(
   // 确保API密钥环境变量存在且被传递给子进程
   const apiKeys = {
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
-    GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY || '',
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || ''
   };
 
   // 记录API密钥状态（只显示是否存在，不显示实际值）
   console.log('使用API密钥状态:', {
     OPENAI_API_KEY: !!apiKeys.OPENAI_API_KEY,
-    GOOGLE_GENERATIVE_AI_API_KEY: !!apiKeys.GOOGLE_GENERATIVE_AI_API_KEY,
+    GEMINI_API_KEY: !!apiKeys.GEMINI_API_KEY,
     DEEPSEEK_API_KEY: !!apiKeys.DEEPSEEK_API_KEY
   });
 
