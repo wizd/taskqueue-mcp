@@ -77,20 +77,23 @@ export async function runFullVideoPipeline(
 
 // --- 使用示例 ---
 // (取消注释并替换为您的实际配置和路径来运行)
-/*
-async function main() {
+export async function HostVideoToR2(localVideoPath: string, tenantId: string, s3Config?: VideoHostingConfig, ffmpegProcessingOptions?: FFmpegHLSProcessingOptions, customVideoId?: string, cleanupLocalFiles: boolean = true) {
+  if (!process.env.R2_ENDPOINT_URL || !process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_VIDEO_BUCKET_NAME || !process.env.R2_PUBLIC_BUCKET_URL) {
+    console.error('R2 environment variables are not set. Please set them in your environment.');
+    throw new Error('R2 environment variables are not set. Please set them in your environment.');
+  }
   const exampleS3Config: VideoHostingConfig = {
     region: 'auto', // Cloudflare R2 特定
-    endpoint: 'YOUR_R2_ENDPOINT_URL', // 例如: 'https://<ACCOUNT_ID>.r2.cloudflarestorage.com'
+    endpoint: process.env.R2_ENDPOINT_URL, // 例如: 'https://<ACCOUNT_ID>.r2.cloudflarestorage.com'
     credentials: {
-      accessKeyId: 'YOUR_R2_ACCESS_KEY_ID',
-      secretAccessKey: 'YOUR_R2_SECRET_ACCESS_KEY',
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
-    bucket: 'your-r2-video-bucket-name',
-    publicBaseUrl: 'YOUR_R2_PUBLIC_BUCKET_URL_OR_CUSTOM_DOMAIN', // 例如: 'https://pub-<YOUR_R2_PUBLIC_BUCKET_ID>.r2.dev'
+    bucket: process.env.R2_VIDEO_BUCKET_NAME,
+    publicBaseUrl: process.env.R2_PUBLIC_BUCKET_URL, // 例如: 'https://pub-<YOUR_R2_PUBLIC_BUCKET_ID>.r2.dev'
   };
 
-  const localVideo = './path/to/your/sample-video.mp4'; // <--- 替换为您的视频文件路径!
+  const localVideo = localVideoPath;
 
   if (!fsNode.existsSync(localVideo)) {
     console.error(`Error: Video file not found at ${localVideo}`);
@@ -100,7 +103,7 @@ async function main() {
 
   try {
     const playableUrl = await runFullVideoPipeline(
-      localVideo,
+      localVideo,      
       exampleS3Config,
       { // 可选的 FFmpeg 处理选项
         // renditions: [ // 自定义码率
@@ -109,6 +112,7 @@ async function main() {
         hlsTime: 6, // 6秒一个片段
         s3KeyPrefix: 'my_videos/hls' // 自定义S3路径前缀
       },
+      tenantId + '_' + randomUUID(),
       // `custom-video-id-${Date.now()}`, // 可选的自定义 videoId
       true // 在成功上传后清理本地HLS文件
     );
@@ -119,6 +123,6 @@ async function main() {
     console.error(`\n🔴 Pipeline execution failed overall:`, error);
   }
 }
-
+/*
 main();
 */
