@@ -45,10 +45,36 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
         console.log('combined tools is ', tools);
   
         let projectContextString = "项目核心上下文不可用或获取失败。";
+        let previousTasksString = '此项目先前没有已完成的任务。';
         if (readProjectFunction) {
           try {
             logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的核心上下文...`);
             const projectContext: Project = await readProjectFunction(projectId);
+            
+            // --- 开始修改: 提取并格式化历史任务信息 ---
+            const allTasks = projectContext.tasks || []; // 假设 Project 类型包含 tasks 数组
+            
+            // 筛选出当前任务之前已完成的任务，并按更新时间排序
+            const previousCompletedTasks = allTasks
+                .filter(task => task.id !== taskData.id && task.status === 'done')
+                .sort((a, b) => (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0)); // 按更新时间升序
+
+            // 格式化历史任务信息字符串            
+            if (previousCompletedTasks.length > 0) {
+                previousTasksString = previousCompletedTasks.map(task => {
+                    return [
+                        '  <previous_task>',
+                        `    ID: ${task.id}`,
+                        `    Title: ${task.title}`,
+                        `    Description: ${task.description}`,
+                        `    Status: ${task.status}`,
+                        `    Result: ${task.completedDetails || '无结果详情。'}`, // task.completedDetails 可能为 null/undefined
+                        '  </previous_task>'
+                    ].join('\n');
+                }).join('\n\n');
+            }
+            // --- 结束修改 ---
+
             // 为了LLM提示，我们在这里只序列化项目本身，避免循环引用或过大的上下文
             const projectInfoForPrompt = { 
               projectId: projectContext.projectId,
@@ -105,6 +131,10 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
   <project_context>
   ${projectContextString}
   </project_context>
+  
+  --- 先前任务历史 ---
+${previousTasksString}
+  --- 历史任务结束 ---
   
   然后，这是你需要处理的具体任务：
   <current_task>
