@@ -39,7 +39,7 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
 
         const tools = {
           ...mcpTools,
-          //...vidgenTools,
+          ...vidgenTools,
           //getWeather,
         };
         console.log('combined tools is ', tools);
