@@ -1,5 +1,5 @@
 import { generateText, experimental_createMCPClient } from "ai";
-import { createStreamHttpClient } from '../../lib/mcp/streamHttpClient.js';
+import { createMCPClient } from '../../lib/mcp/streamHttpClient.js';
 import { BullMQTaskData } from "../../src/types/bullmq.js";
 import { Logger } from '../../src/server/Logger.js';
 import { Project } from "../../src/types/data.js";
@@ -20,7 +20,7 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
         if (!ytdlp_url || !ytdlp_api_key) {
           throw new Error('YTDLP_MCP_URL 或 YTDLP_MCP_API_KEY 未配置');
         }
-        const mcpClient = await createStreamHttpClient("", ytdlp_url, ytdlp_api_key);
+        const mcpClient = await createMCPClient("", ytdlp_url, ytdlp_api_key);
         mcpClientsToClose.push(mcpClient);
   
         const vidgen_url = process.env.VID_GEN_MCP_URL;
@@ -28,14 +28,18 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
         if (!vidgen_url || !vidgen_api_key) {
           throw new Error('VID_GEN_MCP_URL 或 VID_GEN_MCP_API_KEY 未配置');
         }
-        const vidgenClient = await createStreamHttpClient("", vidgen_url, vidgen_api_key);
+        const vidgenClient = await createMCPClient("", vidgen_url, vidgen_api_key);
         mcpClientsToClose.push(vidgenClient);
   
         const mcpTools = await mcpClient.tools();
         const vidgenTools = await vidgenClient.tools();
+
+        console.log('mcpTools', mcpTools);
+        console.log('vidgenTools', vidgenTools);
+
         const tools = {
           ...mcpTools,
-          ...vidgenTools,
+          //...vidgenTools,
           //getWeather,
         };
         console.log('combined tools is ', tools);
@@ -84,6 +88,8 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
   - FFmpeg执行工具：一个可执行任意FFmpeg命令的工具，用于音视频和图片的编辑剪辑。
   - 素材生成工具：基于Google Gemini，可生成图片和视频素材。
   </available_tools>
+
+  当你调用工具操作具体文件的时候，请注意其输入文件名、输出文件名，并且在各个步骤之间做到文件名的衔接，也就是说，如果一个工具的输出文件名是另一个工具的输入文件名，请确保文件名是衔接的。绝对不要虚构文件名。
   
   请注意：除了上述明确列出的工具，所有其他的思考、分析、决策和执行步骤都需要由你独立完成。
   
@@ -120,7 +126,7 @@ export async function runTask(taskData: BullMQTaskData, projectId: string, job: 
               tools,
               maxSteps: 10,
               onStepFinish: async (step) => {
-                console.log('onStepFinish', step);
+                console.log('onStepFinish');
               }
           });
           llmResultText = generatedText;
