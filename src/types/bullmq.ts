@@ -2,6 +2,21 @@ import { RedisOptions } from 'ioredis';
 import { Job, Queue, Worker, QueueEvents, WorkerOptions, QueueOptions } from 'bullmq';
 
 /**
+ * Defines the structure for the object returned by createRedisKeys.
+ */
+export interface IRedisKeys {
+  projectMetadata: (projectId: string) => string;
+  projectCounter: () => string;
+  taskCounter: () => string;
+  projectTasks: (projectId: string) => string;
+  projectQueueName: (projectId: string) => string;
+  projectMetadataPattern: () => string;
+  projectIdFromKeyRegex: () => RegExp;
+  newProjectRegistrationQueueName: () => string;
+  getBullMQPrefix: () => string | undefined;
+}
+
+/**
  * BullMQ任务队列存储模式的配置选项
  */
 export interface BullMQServiceOptions {
@@ -65,77 +80,68 @@ export interface BullMQProjectData {
  * @param prefix 原始前缀
  * @returns 规范化后的前缀
  */
-export function normalizeRedisPrefix(prefix?: string): string | undefined {
-  if (!prefix) return undefined;
-  
-  // 移除前导冒号
-  let normalized = prefix.replace(/^:+/, '');
-  
-  // 确保以冒号结尾（但不应有多个冒号）
-  normalized = normalized.replace(/:+$/, '');
-  if (normalized.length > 0 && !normalized.endsWith(':')) {
-    normalized = `${normalized}:`;
+export const normalizeRedisPrefix = (prefix?: string): string | undefined => {
+  if (!prefix || prefix.trim() === '') {
+    return undefined; // No prefix or empty prefix becomes undefined
   }
-  
-  return normalized;
-}
+  // Ensure prefix ends with a colon if it's not already a system prefix like "bull" or "system"
+  // And ensure it doesn't start with 'bull:' or 'system:' if it's not just 'bull' or 'system'
+  if (prefix !== 'bull' && prefix !== 'system' && (prefix.startsWith('bull:') || prefix.startsWith('system:'))) {
+    // This case is likely an error or misconfiguration, log or handle as error
+    console.warn(`normalizeRedisPrefix: Prefix '${prefix}' starts with reserved keyword 'bull:' or 'system:'. This might lead to issues.`);
+  }
+
+  if (!prefix.endsWith(':') && !['bull', 'system'].includes(prefix)) {
+    return `${prefix}:`;
+  }
+  return prefix;
+};
 
 /**
  * Redis键命名工厂函数
  * 根据提供的前缀创建键生成函数
- * @param prefix 可选的前缀
- * @returns 一个包含键生成函数的对象
+ * @param prefixInput Optional prefix for all keys, typically for multi-tenancy.
+ *                    If undefined or empty, some keys might default to a global scope or use BullMQ's default 'bull'.
  */
-export const createRedisKeys = (prefix?: string) => {
-  // 规范化前缀，确保一致的格式
-  const normalizedPrefix = normalizeRedisPrefix(prefix);
-  
+export const createRedisKeys = (prefixInput?: string): IRedisKeys => {
+  // normalizedApiPrefix is the prefix string that should be used by BullMQ's `prefix` option.
+  // It can be undefined if no prefixInput is provided.
+  const normalizedApiPrefix = normalizeRedisPrefix(prefixInput);
+
+  // effectiveBasePrefix is used for constructing non-queue Redis keys (like metadata, counters).
+  // If normalizedApiPrefix is 'tenant:foo:', effectiveBasePrefix becomes 'tenant:foo:'.
+  // If normalizedApiPrefix is undefined, effectiveBasePrefix becomes ''.
+  const effectiveBasePrefix = normalizedApiPrefix || '';
+
   return {
     /** 项目元数据哈希表键 */
-    projectMetadata: (projectId: string) => 
-      `${normalizedPrefix || ''}project:${projectId}:metadata`,
+    projectMetadata: (projectId: string) => `${effectiveBasePrefix}project:${projectId}:metadata`,
     /** 项目计数器 */
-    projectCounter: () => 
-      `${normalizedPrefix || ''}taskqueue:counters:projects`,
+    projectCounter: () => `${effectiveBasePrefix}system:counters:projects`,
     /** 任务计数器 */
-    taskCounter: () => 
-      `${normalizedPrefix || ''}taskqueue:counters:tasks`,
+    taskCounter: () => `${effectiveBasePrefix}system:counters:tasks`,
     /** 项目任务清单集合 */
-    projectTasks: (projectId: string) => 
-      `${normalizedPrefix || ''}project:${projectId}:tasks`,
+    projectTasks: (projectId: string) => `${effectiveBasePrefix}project:${projectId}:tasks`,
     /** 获取项目队列名称 - 确保不包含冒号 */
-    projectQueueName: (projectId: string) => {
-      // BullMQ队列名称不能包含冒号
-      // 使用统一的格式: tenant_tenantid_proj_projectid
-      
-      if (!normalizedPrefix) {
-        // 没有前缀的情况，直接返回
-        return `proj_${projectId}`;
-      }
-      
-      // 如果是租户前缀格式(tenant:xxx:)，提取租户ID并使用统一格式
-      const tenantMatch = normalizedPrefix.match(/^tenant:([^:]+):/);
-      if (tenantMatch && tenantMatch[1]) {
-        return `tenant_${tenantMatch[1]}_proj_${projectId}`;
-      }
-      
-      // 其他前缀格式 - 确保没有冒号，且没有前导冒号
-      const cleanPrefix = normalizedPrefix.replace(/:/g, '_').replace(/^_+|_+$/g, '');
-      return `${cleanPrefix}_proj_${projectId}`;
-    },
+    projectQueueName: (projectId: string) => `project-${projectId}`,
     /** 用于 KEYS/SCAN 的项目元数据键模式 */
-    projectMetadataPattern: () => 
-      `${normalizedPrefix || ''}project:proj-*:metadata`,
+    projectMetadataPattern: () => `${effectiveBasePrefix}project:*:metadata`,
     /** 从 Redis 键中提取项目 ID 的正则表达式 */
-    projectIdFromKeyRegex: () => 
-      new RegExp(`^${normalizedPrefix || ''}project:(proj-\\d+):metadata$`)
+    projectIdFromKeyRegex: () => {
+      // If there's a prefix, match after it. Otherwise, match from the start.
+      const patternPrefix = effectiveBasePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\\$&'); // Escape regex special chars in prefix
+      return new RegExp(`^${patternPrefix}project:(.+):metadata$`);
+    },
+    newProjectRegistrationQueueName: () => `system-new-project-registration`,
+    /** 提供给BullMQ的完整前缀 */
+    getBullMQPrefix: () => normalizedApiPrefix,
   };
 };
 
 /**
  * 默认Redis键（无前缀）
  */
-export const RedisKeys = createRedisKeys();
+export const RedisKeys: IRedisKeys = createRedisKeys();
 
 /**
  * BullMQ服务状态

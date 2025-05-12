@@ -1,16 +1,26 @@
 import { Worker, Job, WorkerOptions } from 'bullmq';
-import { BullMQTaskData, createRedisKeys, normalizeRedisPrefix } from '../types/bullmq.js';
+import { BullMQTaskData, createRedisKeys, normalizeRedisPrefix, RedisKeys } from '../types/bullmq.js';
 import { RedisManager } from './RedisManager.js';
 import { RedisOptions } from 'ioredis';
 import { Logger } from './Logger.js';
 import { Project, Task } from '../types/data.js';
 import { runTask } from '../../lib/worker/runTask.js';
 import { checkAndConcludeProject } from '../../lib/worker/concludeProject.js';
+
+/**
+ * Represents the data structure for a project registration job.
+ */
+interface RegistrationJobData {
+  projectId: string;
+  tenantId?: string; // Optional tenant ID
+}
+
 /**
  * Worker管理器 - 负责为所有项目队列创建和管理Worker实例
  */
 export class WorkerManager {
   private workers: Map<string, Worker> = new Map();
+  private registrationWorker: Worker | null = null; // Worker for handling new project registrations
   private redisManager: RedisManager;
   private redisOptions?: RedisOptions;
   private workerOptions?: Partial<WorkerOptions>;
@@ -61,27 +71,18 @@ export class WorkerManager {
       return;
     }
 
+    this.logger.info('初始化WorkerManager...');
     try {
-      this.logger.info('初始化WorkerManager...');
-      
-      // 确保Redis管理器已初始化
-      try {
-        // 尝试获取连接 - 如果未初始化会抛出异常
-        const existingConnection = this.redisManager.getConnection();
-        this.logger.info('Redis连接已存在');
-      } catch (error) {
-        // 如果获取连接失败，初始化Redis连接
-        this.logger.info('初始化Redis连接...');
-        await this.redisManager.initialize();
-      }
-      
-      // 获取Redis连接并设置Worker选项
+      // Ensure RedisManager is initialized.
+      // RedisManager.initialize() has its own guard, so direct call is fine.
+      await this.redisManager.initialize();
+      this.logger.info('RedisManager 已初始化或连接已存在。');
+
       const connection = this.redisManager.getConnection();
       
-      // 设置Worker选项
       this.workerOptions = {
         ...this.workerOptions,
-        connection, // 确保使用初始化后的连接
+        connection,
         concurrency: 1, // 强制并发为1，实现项目内串行
         lockDuration: this.workerOptions?.lockDuration ?? 30000,
         stalledInterval: this.workerOptions?.stalledInterval ?? 30000,
@@ -89,8 +90,14 @@ export class WorkerManager {
         drainDelay: this.workerOptions?.drainDelay ?? 5,
         skipVersionCheck: this.workerOptions?.skipVersionCheck ?? false,
       };
-      
+
+      // Critical: Set initialized to true BEFORE calling startRegistrationWorker,
+      // which internally calls ensureInitialized.
       this.initialized = true;
+      
+      // 创建并启动注册 Worker
+      await this.startRegistrationWorker();
+      
       this.logger.info('WorkerManager初始化完成');
     } catch (error) {
       this.logger.error('WorkerManager初始化失败:', error);
@@ -126,55 +133,14 @@ export class WorkerManager {
     this.prefix = normalizeRedisPrefix(prefix);
     this.logger.info(`前缀已更改: ${oldPrefix || '无'} -> ${this.prefix || '无'}`);
     
-    // 重新初始化所有Worker
-    if (this.initialized && this.workers.size > 0) {
-      this.logger.info(`由于前缀更改，重新初始化 ${this.workers.size} 个Worker`);
-      this.shutdownAll().then(() => this.initAll());
-    }
-  }
-
-  /**
-   * 初始化所有项目的Worker
-   * 扫描Redis中的所有项目元数据键，为每个项目创建Worker
-   */
-  public async initAll(): Promise<void> {
-    // 确保已初始化
-    await this.ensureInitialized();
-    
-    try {
-      const redis = this.redisManager.getConnection();
-      const redisKeys = this.getRedisKeys();
-      
-      // 获取所有项目元数据键
-      const projectPattern = redisKeys.projectMetadataPattern();
-      this.logger.info(`扫描项目: ${projectPattern}`);
-      const projectMetadataKeys = await redis.keys(projectPattern);
-      
-      if (!projectMetadataKeys || projectMetadataKeys.length === 0) {
-        this.logger.info('未找到项目，跳过Worker初始化');
-        return;
-      }
-      
-      // 提取项目ID
-      const regex = redisKeys.projectIdFromKeyRegex();
-      const projectIds = projectMetadataKeys
-        .map(key => {
-          const match = key.match(regex);
-          return match ? match[1] : null;
-        })
-        .filter(Boolean) as string[];
-      
-      this.logger.info(`发现 ${projectIds.length} 个项目，开始初始化Worker`);
-      
-      // 为每个项目注册Worker
-      for (const projectId of projectIds) {
-        await this.register(projectId);
-      }
-      
-      this.logger.info(`Worker初始化完成，共 ${this.workers.size} 个Worker`);
-    } catch (error) {
-      this.logger.error('初始化Worker失败:', error);
-      throw error;
+    // 重新初始化所有Worker (包括注册Worker)
+    if (this.initialized) {
+      this.logger.info(`由于前缀更改，重新初始化所有 Worker`);
+      // 关闭所有现有Worker，然后重新启动注册Worker (项目Worker将按需创建)
+      this.shutdownAll().then(async () => {
+        this.logger.info('旧Worker已关闭，重新启动注册Worker');
+        await this.startRegistrationWorker(); 
+      });
     }
   }
 
@@ -186,30 +152,32 @@ export class WorkerManager {
     // 确保已初始化
     await this.ensureInitialized();
     
-    const redis = this.redisManager.getConnection();
     const redisKeys = this.getRedisKeys();
-    const queueName = redisKeys.projectQueueName(projectId);
+    const baseQueueName = redisKeys.projectQueueName(projectId); // Get base name
+    const bullmqOptPrefix = redisKeys.getBullMQPrefix() ?? ''; // Get prefix, default to ''
+
+    const mapKey = bullmqOptPrefix ? `${bullmqOptPrefix}:${baseQueueName}` : baseQueueName;
     
     // 检查Worker是否已存在
-    if (this.workers.has(queueName)) {
-      this.logger.info(`项目 ${projectId} 的Worker已存在，跳过创建`);
-      return this.workers.get(queueName)!;
+    if (this.workers.has(mapKey)) {
+      this.logger.info(`项目 ${projectId} 的Worker (队列 ${mapKey}) 已存在，跳过创建`);
+      return this.workers.get(mapKey)!;
     }
     
     try {
       // 创建项目Worker
-      this.logger.info(`为项目 ${projectId} 创建Worker (队列: ${queueName})`);
+      this.logger.info(`为项目 ${projectId} 创建Worker (队列: ${mapKey})`);
       
       if (!this.workerOptions || !this.workerOptions.connection) {
         throw new Error('Worker选项未正确初始化，无法创建Worker');
       }
       
-      const worker = new Worker(
-        queueName,
+      const worker = new Worker<BullMQTaskData>(
+        baseQueueName, // Use base name
         this.processorFn.bind(this),
         {
           ...this.workerOptions,
-          prefix: this.prefix,
+          prefix: bullmqOptPrefix, // Use explicit prefix
         } as WorkerOptions
       );
       
@@ -217,8 +185,8 @@ export class WorkerManager {
       this.setupWorkerListeners(worker, projectId);
       
       // 存储Worker实例
-      this.workers.set(queueName, worker);
-      this.logger.info(`项目 ${projectId} 的Worker创建成功`);
+      this.workers.set(mapKey, worker);
+      this.logger.info(`项目 ${projectId} 的Worker创建成功 (队列 ${mapKey})`);
       
       return worker;
     } catch (error) {
@@ -272,25 +240,27 @@ export class WorkerManager {
     await this.ensureInitialized();
     
     const redisKeys = this.getRedisKeys();
-    const queueName = redisKeys.projectQueueName(projectId);
-    
+    const baseQueueName = redisKeys.projectQueueName(projectId); // Get base name
+    const bullmqOptPrefix = redisKeys.getBullMQPrefix() ?? ''; // Get prefix, default to ''
+    const mapKey = bullmqOptPrefix ? `${bullmqOptPrefix}:${baseQueueName}` : baseQueueName;
+        
     // 检查Worker是否存在
-    if (!this.workers.has(queueName)) {
-      this.logger.info(`项目 ${projectId} 的Worker不存在，跳过注销`);
+    if (!this.workers.has(mapKey)) {
+      this.logger.info(`项目 ${projectId} 的Worker (队列 ${mapKey}) 不存在，跳过注销`);
       return;
     }
     
     try {
       // 获取Worker实例
-      const worker = this.workers.get(queueName)!;
+      const worker = this.workers.get(mapKey)!;
       
       // 关闭Worker
-      this.logger.info(`关闭项目 ${projectId} 的Worker`);
+      this.logger.info(`关闭项目 ${projectId} 的Worker (队列 ${mapKey})`);
       await worker.close();
       
       // 从映射中移除
-      this.workers.delete(queueName);
-      this.logger.info(`项目 ${projectId} 的Worker已注销`);
+      this.workers.delete(mapKey);
+      this.logger.info(`项目 ${projectId} 的Worker已注销 (队列 ${mapKey})`);
     } catch (error) {
       this.logger.error(`注销项目 ${projectId} 的Worker失败:`, error);
       throw error;
@@ -301,36 +271,75 @@ export class WorkerManager {
    * 关闭所有Worker
    */
   public async shutdownAll(): Promise<void> {
-    if (!this.initialized || this.workers.size === 0) {
-      this.logger.info('没有Worker需要关闭');
-      return;
+    if (!this.initialized) {
+        // If not initialized, cannot have workers.
+        this.logger.info('WorkerManager未初始化，没有Worker需要关闭');
+        return;
     }
-    
-    this.logger.info(`开始关闭 ${this.workers.size} 个Worker`);
-    
-    // 创建所有Worker关闭操作的Promise数组
-    const closePromises = Array.from(this.workers.entries()).map(async ([queueName, worker]) => {
-      try {
-        this.logger.info(`关闭队列 ${queueName} 的Worker`);
-        await worker.close();
-        return queueName;
-      } catch (error) {
-        this.logger.error(`关闭队列 ${queueName} 的Worker失败:`, error);
-        throw error;
-      }
+
+    const projectWorkerCount = this.workers.size;
+    const registrationWorkerExists = !!this.registrationWorker;
+
+    if (projectWorkerCount === 0 && !registrationWorkerExists) {
+        this.logger.info('没有活动的Worker需要关闭');
+        return;
+    }
+
+    this.logger.info(`开始关闭 ${projectWorkerCount} 个项目Worker${registrationWorkerExists ? ' 和 注册Worker' : ''}`);
+
+    const closePromises: Promise<string | null>[] = []; // Explicitly type the promise array
+
+    // Close project workers
+    this.workers.forEach((worker, mapKey) => { // mapKey is the fully qualified name
+        closePromises.push((async () => {
+            try {
+                this.logger.info(`关闭项目队列 ${mapKey} 的Worker`);
+                await worker.close();
+                return mapKey; // Success
+            } catch (error) {
+                this.logger.error(`关闭项目队列 ${mapKey} 的Worker失败:`, error);
+                return null; // Failure
+            }
+        })());
     });
+    // Clear the project worker map immediately after initiating close
+    this.workers.clear();
+
+
+    // Close registration worker
+    if (this.registrationWorker) {
+        // Assign to a temp variable to avoid race conditions with the async operation
+        const workerToClose = this.registrationWorker;
+        const workerNameForLog = workerToClose.name; // Base name
+        const workerPrefixForLog = (workerToClose as any).opts?.prefix ?? ''; // Actual prefix used
+        const fullWorkerNameForLog = workerPrefixForLog ? `${workerPrefixForLog}:${workerNameForLog}` : workerNameForLog;
+
+        // Set to null immediately BEFORE awaiting close, to prevent race condition in restart logic.
+        this.registrationWorker = null;
+        this.logger.info('Registration worker instance reference cleared.');
+
+        closePromises.push((async () => {
+            try {
+                this.logger.info(`关闭注册Worker (队列: ${fullWorkerNameForLog})`);
+                await workerToClose.close();
+                this.logger.info('注册Worker已成功关闭');
+                return fullWorkerNameForLog; // Success
+            } catch (error) {
+                this.logger.error(`关闭注册Worker (队列: ${fullWorkerNameForLog}) 失败:`, error);
+                // this.registrationWorker is already null
+                return null; // Failure
+            }
+        })());
+    }
     
     // 等待所有Worker关闭
     try {
-      const closedQueues = await Promise.all(closePromises);
-      
-      // 清空workers映射
-      this.workers.clear();
-      
-      this.logger.info(`成功关闭 ${closedQueues.length} 个Worker`);
+      const results = await Promise.all(closePromises);
+      const closedItems = results.filter(r => r !== null);
+      this.logger.info(`关闭操作完成，成功关闭 ${closedItems.length} 个Worker`);
     } catch (error) {
-      this.logger.error('关闭Worker时发生错误:', error);
-      throw error;
+      // This catch is less likely now as individual errors are caught
+      this.logger.error('等待Worker关闭时发生意外错误:', error);
     }
   }
 
@@ -357,5 +366,75 @@ export class WorkerManager {
     return taskResult;
   }
 
+  /**
+   * Starts the worker responsible for listening to the new project registration queue.
+   */
+  private async startRegistrationWorker(): Promise<void> {
+    await this.ensureInitialized(); // Ensure Redis connection is ready
 
+    if (this.registrationWorker) {
+      this.logger.warn('Registration worker already running. Skipping start.');
+      return;
+    }
+
+    const redisKeys = this.getRedisKeys();
+    const baseRegistrationQueueName = redisKeys.newProjectRegistrationQueueName(); // Get base name
+    const bullmqOptPrefix = redisKeys.getBullMQPrefix() ?? ''; // Get prefix, default to ''
+    const connection = this.redisManager.getConnection();
+
+    const fullQueueNameForLog = bullmqOptPrefix ? `${bullmqOptPrefix}:${baseRegistrationQueueName}` : baseRegistrationQueueName;
+
+    this.logger.info(`Starting registration worker for queue: ${fullQueueNameForLog}`);
+
+    try {
+      this.registrationWorker = new Worker<RegistrationJobData>(
+        baseRegistrationQueueName, // Use base name
+        this.handleRegistrationJob.bind(this),
+        {
+          connection: connection,
+          concurrency: 5, 
+          prefix: bullmqOptPrefix, // Use explicit prefix
+        }
+      );
+
+      this.registrationWorker.on('completed', (job: Job<RegistrationJobData>) => {
+        this.logger.info(`Registration job for project ${job.data.projectId} completed (queue: ${fullQueueNameForLog}).`);
+      });
+
+      this.registrationWorker.on('failed', (job: Job<RegistrationJobData> | undefined, error: Error) => {
+        const projectId = job?.data?.projectId ?? 'unknown';
+        this.logger.error(`Registration job for project ${projectId} failed (queue: ${fullQueueNameForLog}):`, error);
+      });
+
+      this.registrationWorker.on('error', (error: Error) => {
+        this.logger.error(`Registration worker (queue: ${fullQueueNameForLog}) encountered an error:`, error);
+      });
+
+      this.logger.info(`Registration worker started successfully for queue ${fullQueueNameForLog}.`);
+
+    } catch (error) {
+      this.logger.error(`Failed to start registration worker for queue ${fullQueueNameForLog}:`, error);
+      this.registrationWorker = null; // Ensure it's null if startup failed
+      throw error; // Re-throw the error to signal initialization failure
+    }
+  }
+
+  /**
+   * Handles jobs from the new project registration queue.
+   * @param job The registration job containing the projectId.
+   */
+  private async handleRegistrationJob(job: Job<RegistrationJobData>): Promise<void> {
+    const { projectId, tenantId } = job.data;
+    this.logger.info(`Received registration request for project ${projectId} (Tenant: ${tenantId || 'N/A'})`);
+
+    try {
+      // Attempt to register the worker for the new project
+      await this.register(projectId);
+      this.logger.info(`Successfully registered worker for project ${projectId}.`);
+    } catch (error) {
+      this.logger.error(`Failed to register worker for project ${projectId} during registration job:`, error);
+      // Optional: Implement retry logic or move to a failed queue if needed
+      throw error; // Re-throw to mark the job as failed in BullMQ
+    }
+  }
 } 
