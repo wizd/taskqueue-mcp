@@ -48,7 +48,7 @@
 		"@modelcontextprotocol/sdk": "^1.11.1",
 		"@types/express": "^5.0.1",
 		"@wizdy/typescript-sdk": "^1.0.7",
-		"ai": "../ai/packages/ai",
+		"@wizdy/ai": "latest",
 		"bullmq": "^5.1.1",
 		"chalk": "^5.4.1",
 		"cli-table3": "^0.6.5",

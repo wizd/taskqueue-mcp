@@ -38,12 +38,12 @@ importers:
       '@types/express':
         specifier: ^5.0.1
         version: 5.0.1
+      '@wizdy/ai':
+        specifier: latest
+        version: 4.3.1-5.0(react@19.1.0)(zod@3.24.4)
       '@wizdy/typescript-sdk':
         specifier: ^1.0.7
         version: 1.1.1
-      ai:
-        specifier: ../ai/packages/ai
-        version: link:../ai/packages/ai
       bullmq:
         specifier: ^5.1.1
         version: 5.52.2
@@ -1053,6 +1053,16 @@ packages:
 
   '@types/yargs@17.0.33':
     resolution: {integrity: sha512-WpxBCKWPLr4xSsHgz511rFJAM+wS28w2zEO1QDNY5zM/S8ok70NNfztH0xwhqKyaK0OHCbN98LDAZuy1ctxDkA==}
+
+  '@wizdy/ai@4.3.1-5.0':
+    resolution: {integrity: sha512-J+CVJh3ji3jG/YxbMwoi4RjdnL4JKZx5s2GAPi3Cad5WArPGUc4rNw4tPFH1iBAsZvf++f/B5FrjyzYVY7T4mA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      react: ^18 || ^19 || ^19.0.0-rc
+      zod: ^3.23.8
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   '@wizdy/typescript-sdk@1.1.1':
     resolution: {integrity: sha512-ufZhOkk7UNIxIKL2aUwUhHOL7y6NHj2za/Yd7DjcObJJgfxjmui8HWmislDwdQEzpSonlYcUYMEu/wdaS7FoFg==}
@@ -3972,6 +3982,22 @@ snapshots:
   '@types/yargs@17.0.33':
     dependencies:
       '@types/yargs-parser': 21.0.3
+
+  '@wizdy/ai@4.3.1-5.0(react@19.1.0)(zod@3.24.4)':
+    dependencies:
+      '@ai-sdk/provider': 1.1.3
+      '@ai-sdk/provider-utils': 2.2.8(zod@3.24.4)
+      '@ai-sdk/react': 1.2.12(react@19.1.0)(zod@3.24.4)
+      '@ai-sdk/ui-utils': 1.2.11(zod@3.24.4)
+      '@opentelemetry/api': 1.9.0
+      jsondiffpatch: 0.6.0
+      ws: 8.18.2
+      zod: 3.24.4
+    optionalDependencies:
+      react: 19.1.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@wizdy/typescript-sdk@1.1.1':
     dependencies:

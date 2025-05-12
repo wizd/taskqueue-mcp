@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText } from "@wizdy/ai";
 import { Logger } from "../../src/server/Logger.js";
 import { Project } from "../../src/types/data.js";
 import { modelProvider } from "../ai/provider.js";

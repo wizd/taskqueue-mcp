@@ -17,7 +17,7 @@ import {
   UpdateTaskSuccessData
 } from "../types/response.js";
 import { AppError, AppErrorCode } from "../types/errors.js";
-import { generateObject, jsonSchema } from "ai";
+import { generateObject, jsonSchema } from "@wizdy/ai";
 import { BullMQService } from "./BullMQService.js";
 import { TaskManagerBase } from "./TaskManagerBase.js";
 import { BullMQTaskData, BullMQServiceOptions } from "../types/bullmq.js";

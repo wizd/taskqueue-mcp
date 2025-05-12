@@ -19,9 +19,8 @@ import {
 } from "../types/response.js";
 import { AppError, AppErrorCode } from "../types/errors.js";
 import { FileSystemService } from "./FileSystemService.js";
-import { generateObject, jsonSchema } from "ai";
+import { generateObject, jsonSchema } from "@wizdy/ai";
 import { TaskManagerBase } from "./TaskManagerBase.js";
-import { MigrationMode } from "../types/bullmq.js";
 import { modelProvider } from "../../lib/ai/provider.js";
 
 // Default path follows platform-specific conventions

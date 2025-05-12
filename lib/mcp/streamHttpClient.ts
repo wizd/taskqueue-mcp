@@ -1,7 +1,7 @@
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { experimental_createMCPClient } from 'ai';
-import { MCPClient } from 'ai';
+import { experimental_createMCPClient } from '@wizdy/ai';
+import { MCPClient } from '@wizdy/ai';
 
 export async function createMCPClient(tenantId: string, apiUrl: string, apiKey: string) : Promise<MCPClient> {
     // 获取 bearer token

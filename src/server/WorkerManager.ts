@@ -209,7 +209,7 @@ export class WorkerManager {
         this.processorFn.bind(this),
         {
           ...this.workerOptions,
-          prefix: '', // 确保Worker与Queue使用相同的前缀设置
+          prefix: this.prefix,
         } as WorkerOptions
       );
       

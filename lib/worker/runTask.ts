@@ -1,4 +1,4 @@
-import { generateText, experimental_createMCPClient } from "ai";
+import { generateText, experimental_createMCPClient } from "@wizdy/ai";
 import { createMCPClient } from '../../lib/mcp/streamHttpClient.js';
 import { BullMQTaskData } from "../../src/types/bullmq.js";
 import { Logger } from '../../src/server/Logger.js';
