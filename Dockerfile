@@ -7,12 +7,15 @@ RUN apk add --no-cache git
 # 先创建工作目录
 WORKDIR /app
 
-# 复制package.json和package-lock.json
-COPY package*.json ./
+# 复制package.json和pnpm-lock.yaml (如果是pnpm)
+COPY package.json pnpm-lock.yaml ./
+
+# 安装pnpm
+RUN npm install -g pnpm
 
 # 回到app目录并安装依赖
 WORKDIR /app
-RUN --mount=type=cache,target=/root/.npm npm install
+RUN --mount=type=cache,target=/root/.pnpm-store pnpm install
 
 # 复制源代码
 COPY ./ /app
@@ -25,10 +28,13 @@ WORKDIR /app
 
 COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/package.json /app/package.json
-COPY --from=builder /app/package-lock.json /app/package-lock.json
+COPY --from=builder /app/pnpm-lock.yaml /app/pnpm-lock.yaml
 
 ENV NODE_ENV=production
 
-RUN npm ci --ignore-scripts --omit-dev
+# 安装pnpm
+RUN npm install -g pnpm
+
+RUN pnpm install --prod --ignore-scripts
 
 ENTRYPOINT ["node", "dist/src/server/index.js"]
