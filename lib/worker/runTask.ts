@@ -161,7 +161,7 @@ export async function runTask(
 - 素材生成工具：可生成图片和视频素材。
 - STT 和 TTS：可执行语音转文字和文字转语音操作。
 - WhisperX 执行工具：可以对音频进行文本转录，或者生成标准的srt格式字幕，方便视频剪辑。
-- 文本文件读写：可以读写文本文件，方便进行文本分析和处理。
+- 文本文件读写工具：可以读写文本文件，方便进行文本分析和处理。
 </available_tools>
 
 当你调用工具操作具体文件的时候，请注意其输入文件名、输出文件名，并且在各个步骤之间做到文件名的衔接，也就是说，如果一个工具的输出文件名是另一个工具的输入文件名，请确保文件名是衔接的。绝对不要假设、虚构文件名。有时候你需要阅读前面所有的步骤以得到正确的文件名。
@@ -171,6 +171,7 @@ export async function runTask(
 Tips：
 * 了解一个视频的内容最快的方法是转录音频为文字并阅读它。
 * 如果要调用ffmpeg操作字幕，推荐使用雅黑字体，路径位于 /mnt/c/Windows/Fonts/msyh.ttc
+* 如果一个操作过程要新产生一个文件，只要有可能，就给他一个随机的文件名，以避免命名冲突。
 `;
 
 
@@ -203,7 +204,7 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
     ];
 
     // --- Execution Loop ---
-    const maxSteps = 12; // Maximum number of LLM calls/tool execution cycles
+    const maxSteps = 24; // Maximum number of LLM calls/tool execution cycles
     let currentStep = 0;
     let finalResultText = "任务执行未产生最终文本结果。";
 
