@@ -84,15 +84,13 @@ export async function runTask(
       ...prefixTools("ytdlp", mcpToolsRaw as Record<string, Tool<any, any>>), // Assert input type 
       ...prefixTools("vidgen", vidgenToolsRaw as Record<string, Tool<any, any>>),
     };
-    logger.info(`合并后的工具列表: ${Object.keys(tools).join(', ')}`);
-
 
     // --- Fetch Project Context ---
     let projectContextString = "项目核心上下文不可用或获取失败。";
     let previousTasksString = "此项目先前没有已完成的任务。";
     if (readProjectFunction) {
       try {
-        logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的核心上下文...`);
+        //logger.info(`正在为任务 ${taskData.id} 获取项目 ${projectId} 的核心上下文...`);
         const projectContext: Project = await readProjectFunction(projectId);
         
         // --- 开始修改: 提取并格式化历史任务信息 ---
@@ -132,7 +130,6 @@ export async function runTask(
           updatedAt: projectContext.updatedAt
         };
         projectContextString = JSON.stringify(projectInfoForPrompt, null, 2);
-        logger.info(`成功获取项目 ${projectId} 的核心上下文 (任务 ${taskData.id})`);
         await job.updateProgress(20);
       } catch (e) {
         logger.error(`获取项目 ${projectId} 核心上下文失败 (任务 ${taskData.id}):`, e);
@@ -148,7 +145,6 @@ export async function runTask(
       updatedAt: Date.now()
     };
     await job.updateData(inProgressTaskData);
-    logger.info(`任务 ${taskData.id} 状态更新为 "in progress"`);
     
     // - 个人社交媒体发布工具：可以把视频发布到个人社交媒体上以便进行公开传播,返回一个社交媒体的链接。
     // --- Prepare Initial Prompt and Messages ---
@@ -220,90 +216,27 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
           tools,
           // maxSteps in generateText is NOT what we want here for loop control
         });
-
-        // Add the LLM\'s response (text or tool calls) to the history
+        
+        // Add the LLM's response (text or tool calls) to the history
         let assistantMessage: CoreMessage;
-        if (result.finishReason === 'tool-calls') {
-             // Ensure toolCalls is not undefined before assigning
-            assistantMessage = { role: 'assistant', content: result.toolCalls ?? [] }; // Assign tool calls to content
+        if (result.finishReason === 'tool-calls' && result.toolCalls && result.toolCalls.length > 0) {
+            assistantMessage = { role: 'assistant', content: result.toolCalls }; 
         } else {
-            // Includes 'stop', 'length', 'error', etc.
-             // Ensure text is not undefined before assigning
-             // Use nullish coalescing for safety
             assistantMessage = { role: 'assistant', content: result.text ?? '' };
         }
         messages.push(assistantMessage);
+        
+        // If tools were called AND EXECUTED by the SDK (indicated by result.toolResults being present),
+        // add these results to the messages array for the next LLM iteration.
+        if (result.toolResults && result.toolResults.length > 0) {
+            messages.push({ role: 'tool', content: result.toolResults });
+        }
 
         if (result.finishReason === "stop") {
-          logger.info(`任务 ${taskData.id} - 步骤 ${currentStep}: LLM 认为任务已完成。`);
-          finalResultText = result.text;
+          finalResultText = result.text ?? "任务完成，但无文本结果。"; // Ensure finalResultText is assigned
           break; // Exit the loop
         } else if (result.finishReason === "tool-calls") {
-          logger.info(`任务 ${taskData.id} - 步骤 ${currentStep}: LLM 请求工具调用: ${result.toolCalls.map(tc => tc.toolName).join(', ')}`);
-
-          const toolResults: ToolResultPart[] = [];
-
-          for (const toolCall of result.toolCalls) {
-            const { toolCallId, toolName, args } = toolCall;
-            logger.info(`任务 ${taskData.id} - 步骤 ${currentStep}: 执行工具 ${toolName} (ID: ${toolCallId})`);
-            logger.debug(`工具参数: ${JSON.stringify(args)}`);
-
-            const toolFn = tools[toolName] as Tool<any, any> | undefined; // Get the prefixed tool definition
-
-            if (!toolFn) {
-                logger.error(`任务 ${taskData.id} - 步骤 ${currentStep}: 找不到请求的工具 ${toolName}`);
-                toolResults.push({
-                    type: 'tool-result',
-                    toolCallId,
-                    toolName,
-                    result: `错误: 未知的工具名称 "${toolName}"`,
-                    isError: true,
-                });
-                continue; // Skip to next tool call if any
-            }
-
-            // Now that we\'ve checked toolFn exists, TypeScript should know it\'s defined
-            // Also check if \'execute\' exists before calling
-            if (typeof toolFn.execute !== 'function') {
-                 logger.error(`任务 ${taskData.id} - 步骤 ${currentStep}: 工具 ${toolName} 没有可执行的 'execute' 方法。`);
-                 toolResults.push({
-                     type: 'tool-result',
-                     toolCallId,
-                     toolName,
-                     result: `错误: 工具 ${toolName} 缺少 'execute' 方法。`,
-                     isError: true,
-                 });
-                 continue;
-            }
-
-            try {
-              // Explicitly await the potentially long-running tool call
-              // Access the execute method on the Tool object
-              // Pass the required ToolExecutionOptions
-              const toolExecutionResult = await toolFn.execute(args, { toolCallId, messages });
-              logger.info(`任务 ${taskData.id} - 步骤 ${currentStep}: 工具 ${toolName} (ID: ${toolCallId}) 执行成功。`);
-              logger.debug(`工具结果: ${JSON.stringify(toolExecutionResult)}`); // Be careful logging potentially large results
-              toolResults.push({
-                type: "tool-result",
-                toolCallId,
-                toolName,
-                result: toolExecutionResult, // Pass the actual result back
-              });
-            } catch (toolError) {
-              logger.error( `任务 ${taskData.id} - 步骤 ${currentStep}: 工具 ${toolName} (ID: ${toolCallId}) 执行失败:`, toolError );
-              toolResults.push({
-                type: "tool-result",
-                toolCallId,
-                toolName,
-                result: `工具执行错误: ${ toolError instanceof Error ? toolError.message : String(toolError) }`,
-                isError: true,
-              });
-            }
-          } // End of for loop iterating tool calls
-
-          // Add all tool results to messages for the next LLM call
-          messages.push({ role: 'tool', content: toolResults });
-
+          logger.info(`任务 ${taskData.id} - 步骤 ${currentStep}: LLM 请求工具调用。SDK 内部处理或已将结果包含在返回中。继续循环。`);
         } else {
           // Handle other finish reasons like \'length\', \'error\', etc.
           logger.warn(`任务 ${taskData.id} - 步骤 ${currentStep}: LLM 调用因 '${result.finishReason}' 结束。`);
