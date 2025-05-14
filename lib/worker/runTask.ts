@@ -267,13 +267,45 @@ ${taskData.ruleRecommendations ? `Rule Recommendations: ${taskData.ruleRecommend
     logger.info(`任务 ${taskData.id} 执行循环完成。最终结果文本: ${finalResultText.substring(0,100)}...`);
     await job.updateProgress(90);
 
+    // --- Helper to format CoreMessage content for detailed history ---
+    const formatCoreMessageContentForDetails = (content: CoreMessage['content']): string => {
+      if (typeof content === 'string') {
+        return content;
+      }
+      // content is Array<ToolCallPart | ToolResultPart>
+      if (Array.isArray(content)) {
+        if (content.length === 0) {
+          return "[空的内容数组]";
+        }
+        return content.map(part => {
+          if (part.type === 'tool-call') {
+            return `工具调用 (ID: ${part.toolCallId}): ${part.toolName}
+参数:
+${JSON.stringify(part.args, null, 2)}`;
+          } else if (part.type === 'tool-result') {
+            return `工具结果 (对应工具调用 ID: ${part.toolCallId})
+结果:
+${part.isError ? '错误: ' : ''}${JSON.stringify(part.result, null, 2)}`;
+          }
+          return `[消息内容中未知的组成部分类型: ${JSON.stringify(part, null, 2)}]`;
+        }).join('\n\n');
+      }
+      return '[不支持的消息内容结构]';
+    };
+
+    const taskExecutionHistory = messages.map(
+      (msg, index) => {
+        return `--- 步骤 ${index + 1}: [${msg.role.toUpperCase()}] ---\n${formatCoreMessageContentForDetails(msg.content)}`;
+      }
+    ).join('\n\n--------------------------------------\n\n');
+    // --- End Helper ---
+
     // --- Finalize Task ---
     const completedData: BullMQTaskData = {
       ...taskData, // Start with original task data
       status: "done",
-       // Store the final LLM text or a summary of the conversation
-      completedDetails: finalResultText,
-      // Optional: Store the full message history for debugging/auditing
+      completedDetails: taskExecutionHistory, // Store the full formatted history
+      // Optional: Store the raw message history for debugging/auditing if needed
       // executionHistory: messages,
       updatedAt: Date.now(),
     };
